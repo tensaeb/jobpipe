@@ -1,0 +1,10 @@
+# Core — the pipeline runs fully on these five: ingest, dedup, extract,
+# score, approve, .eml generation, AI agent, SMTP send, selftest.
+pyyaml>=6.0
+pydantic>=2.0
+rapidfuzz>=3.0
+python-dotenv>=1.0
+# LLM client for every OpenAI-compatible provider (ollama, gemini, groq,
+# openrouter, cerebras, mistral, ...). Without it `jobpipe agent` and
+# `llm-test` exit with a clear message; the regex pipeline still works.
+openai>=1.40

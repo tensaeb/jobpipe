@@ -1,0 +1,26 @@
+# Secrets / local config — never commit
+.env
+*.session
+telegram.session
+
+# Personal fact bank + CVs: only the sanitized examples ship (see
+# deploy/push_to_github.sh, which refuses to push these)
+profile.yaml
+cv/
+uploads/
+
+# Runtime state (local data, generated mail)
+data/*.db
+data/*.db-*
+outbox/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/

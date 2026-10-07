@@ -1,0 +1,240 @@
+# ---------------------------------------------------------------------------
+# profile.yaml — canonical candidate fact bank
+# Source of truth: "Tensae CV - Software.pdf" (2 pages), parsed 2026-10-07.
+# 
+# RULE: nothing in this file may be asserted in an application unless it
+# appears verbatim or near-verbatim in the CV. Nothing here was inferred
+# about the candidate's biography. Skill *tiers* ARE inferred, and are
+# labelled as such.
+# ---------------------------------------------------------------------------
+candidate:
+  name: "Your Name"
+  title: "Software Engineer"
+  location: "Addis Ababa, Ethiopia"
+  phone: ""            # your number
+  email: ""            # your email
+  portfolio: ""
+  github: ""
+  linkedin: ""
+
+education:
+  - degree: "BSc Software Engineering"
+    institution: "Addis Ababa University"
+    completed: "2021-10"
+
+# --- Employment timeline ----------------------------------------------------
+# Computed, not claimed. Used by the matcher for experience gating.
+experience:
+  total_months_employed: 48          # sum of the four roles below
+  years_claimed_on_cv: "4+"          # consistent with the timeline AS WRITTEN
+  first_role_start: "2021-10"
+  last_role_end: "2025-12"
+  currently_employed: false
+  months_since_last_role: 10         # 2025-12 -> 2026-10  ** SEE conflicts **
+
+roles:
+  - id: BETA
+    company: "Beta Tech Hub"
+    title: "Software Engineer & Team Leader"
+    start: "2024-09"
+    end: "2025-12"
+    disputed: true                   # see conflicts.BETA_DATES
+    evidence:
+      BETA_01: "Led end-to-end delivery of a Property Management System, giving landlords and property managers a single platform for role-based access control, financial tracking, and automated notifications."
+      BETA_02: "Coordinated sprint planning, task allocation, and key technical decisions to keep releases on schedule without sacrificing quality."
+      BETA_03: "Built and supported the e-commerce platforms Global Trade House and Efoyita, strengthening B2B/B2C transaction flows and the overall customer experience."
+
+  - id: ONETAP
+    company: "OneTap Technologies"
+    title: "Full-Stack Engineer"
+    start: "2023-09"
+    end: "2024-05"
+    evidence:
+      ONETAP_01: "Built and maintained scalable web applications with HTML, CSS, JavaScript, Python, and SQL, keeping interfaces responsive and data layers well integrated."
+      ONETAP_02: "Delivered the OneTap Technologies corporate website, strengthening brand presence and user engagement."
+      ONETAP_03: "Supported Tsedey Bank's USSD initiative and mobile app design, improving accessibility and the overall customer experience."
+
+  - id: LINE
+    company: "Line Addis Consultancy"
+    title: "Full-Stack Engineer"
+    start: "2022-08"
+    end: "2023-08"
+    evidence:
+      LINE_01: "Helped build Sek'ela SIMS, a Student/School Information Management System that lets schools track daily operations, generate reports, and surface data for stakeholders."
+      LINE_02: "Applied UI/UX designs across the product, keeping branding consistent and interfaces intuitive."
+      LINE_03: "Strengthened reliability by writing unit and functional tests, documenting changes, and running code reviews in Jira."
+
+  - id: BETE
+    company: "Bete-Semay Creative Media"
+    title: "Backend Engineer"
+    start: "2021-10"
+    end: "2022-07"
+    evidence:
+      BETE_01: "Built the backend infrastructure for Moogter.com, a social platform where thought leaders champion causes and drive public discourse."
+      BETE_02: "Designed database models and client-server APIs, improving both performance and scalability."
+      BETE_03: "Debugged and reviewed code across the stack, resolving functional and performance issues to keep the software dependable."
+
+projects:
+  - id: NODELALA
+    name: "NoDelala — Property Management Platform"
+    role: "Lead Developer & Project Manager"
+    evidence:
+      NODELALA_01: "Designed and shipped a full-stack property listing and management solution across web and mobile, letting owners list, manage, and showcase real estate assets."
+  - id: EFDP
+    name: "EFDP Transport Platform — Ministry of Transport & Logistics"
+    role: "Frontend Developer"
+    evidence:
+      EFDP_01: "Built a large-scale digital platform for Ethiopia's Ministry of Transport to manage and present transport-related data and public services."
+      EFDP_02: "Developed a responsive public-facing site and a multi-role admin dashboard with role-based access control and dynamic content management."
+  - id: ML
+    name: "Vehicle Price Predictor"
+    role: "Machine Learning Engineer"
+    evidence:
+      ML_01: "Built a Streamlit application that predicts vehicle prices in ETB and USD using regression models trained on Ethiopian automotive sales data."
+
+domains:
+  - { name: "real estate / property management", strength: strong, evidence: [BETA_01, NODELALA_01] }
+  - { name: "e-commerce",                        strength: strong, evidence: [BETA_03] }
+  - { name: "education / school management",     strength: medium, evidence: [LINE_01] }
+  - { name: "public sector / government",        strength: medium, evidence: [EFDP_01, EFDP_02] }
+  - { name: "social platform",                   strength: medium, evidence: [BETE_01] }
+  - { name: "banking / fintech",                 strength: weak,   evidence: [ONETAP_03] }
+  - { name: "machine learning",                  strength: weak,   evidence: [ML_01] }
+
+# --- Skills, tiered by strength of evidence ---------------------------------
+# THIS IS THE KEY STRUCTURE. The plan's original profile.yaml treated every
+# listed skill as equal, which is what produced its inflated AI/ML scores.
+#
+#   named     - named explicitly inside an employment bullet          (weight 1.00)
+#   inferred  - role title/duties strongly imply it, but UNNAMED      (weight 0.70)
+#   project   - evidenced only by a portfolio project                 (weight 0.60)
+#   listed    - appears ONLY in the Technical Competencies list       (weight 0.35)
+#
+# 'listed' is not a lie — it is an unevidenced claim. A technical screen will
+# probe it. The matcher must not treat it as production depth.
+skills:
+  # --- named in an employment bullet ---
+  Python:        { tier: named,    evidence: [ONETAP_01] }
+  JavaScript:    { tier: named,    evidence: [ONETAP_01] }
+  SQL:           { tier: named,    evidence: [ONETAP_01] }
+  HTML5:         { tier: named,    evidence: [ONETAP_01] }
+  CSS3:          { tier: named,    evidence: [ONETAP_01] }
+
+  # --- strongly implied by role scope, but no technology named ---
+  "REST APIs":   { tier: inferred, evidence: [BETE_02] }
+  "Database design": { tier: inferred, evidence: [BETE_02] }
+  "Backend development": { tier: inferred, evidence: [BETE_01, BETE_02] }
+  "Frontend development": { tier: inferred, evidence: [EFDP_02, LINE_02] }
+  "Full-stack development": { tier: inferred, evidence: [ONETAP_01, NODELALA_01] }
+  "RBAC / auth":  { tier: inferred, evidence: [BETA_01, EFDP_02] }
+  "UI/UX":        { tier: inferred, evidence: [LINE_02] }
+  "Unit testing": { tier: inferred, evidence: [LINE_03] }
+  "Code review":  { tier: inferred, evidence: [LINE_03, BETE_03] }
+  "Agile / sprint planning": { tier: inferred, evidence: [BETA_02] }
+  "Team leadership": { tier: inferred, evidence: [BETA_02] }
+  Jira:          { tier: named,    evidence: [LINE_03] }
+
+  # --- evidenced by portfolio project only ---
+  Streamlit:      { tier: project, evidence: [ML_01] }
+  "Scikit-learn": { tier: project, evidence: [ML_01], note: "regression models; library not named in CV" }
+  "Mobile development": { tier: project, evidence: [NODELALA_01], note: "'across web and mobile'; no platform named, no store release stated" }
+
+  # --- competencies list only: NO narrative evidence anywhere in the CV ---
+  TypeScript:    { tier: listed }
+  Java:          { tier: listed }
+  React:         { tier: listed }
+  "Next.js":     { tier: listed }
+  "React Native": { tier: listed }
+  "Tailwind CSS": { tier: listed }
+  "Redux Toolkit": { tier: listed }
+  Figma:         { tier: listed }
+  "Adobe XD":    { tier: listed }
+  "Node.js":     { tier: listed }
+  Express:       { tier: listed }
+  NestJS:        { tier: listed }
+  Django:        { tier: listed }
+  FastAPI:       { tier: listed }
+  GraphQL:       { tier: listed }
+  PostgreSQL:    { tier: listed }
+  MongoDB:       { tier: listed }
+  MySQL:         { tier: listed }
+  Prisma:        { tier: listed }
+  Pandas:        { tier: listed }
+  NumPy:         { tier: listed }
+  TensorFlow:    { tier: listed }
+  OpenCV:        { tier: listed }
+  Jupyter:       { tier: listed }
+  Git:           { tier: listed }
+  GitHub:        { tier: listed }
+  Docker:        { tier: listed }
+  AWS:           { tier: listed }
+  "Google Cloud": { tier: listed }
+  Vercel:        { tier: listed }
+  "CI/CD":       { tier: listed }
+
+# --- Skills the candidate does NOT have (hard negatives) --------------------
+# Used to reject confidently rather than letting an LLM hedge.
+absent:
+  - Angular
+  - Svelte
+  - Vue
+  - Kubernetes
+  - Jenkins
+  - Terraform
+  - Go
+  - Rust
+  - PHP
+  - Laravel
+  - ".NET"
+  - Ruby
+  - Kotlin
+  - Swift
+  - Flutter
+  - Dart
+  - Elixir
+  - Scala
+
+conflicts:
+  BETA_DATES:
+    severity: critical
+    field: "Beta Tech Hub employment dates"
+    cv_says: "2024-09 to 2025-12"
+    supporting_letter_says: "2024-10-10 to 2025-04-22"
+    impact: >
+      If the letter is correct, this role is 6.5 months rather than 16.
+      Total experience falls from ~48 months to ~38 (3.2 years), the "4+ years"
+      headline becomes unsupportable, and the employment gap grows from
+      10 months to 18. Resolve manually before any application is sent.
+    action: BLOCK_SENDING
+
+gaps:
+  critical:
+    # GITHUB_MISSING resolved 2026-10-07: github.com/tensaeb, linkedin.com/in/tensaeb
+    # Still ADD THESE TO THE CV ITSELF — the fact bank knowing them does not
+    # put them on the document a recruiter opens.
+    - id: EMPLOYMENT_GAP
+      detail: >
+        Last role ends 2025-12; today is 2026-10. A 10-month unexplained gap
+        is the first thing a reviewer will notice, and nothing in the CV
+        addresses it. Not a software problem.
+    - id: UNNAMED_STACK
+      detail: >
+        30+ technologies are claimed in Technical Competencies, but only 5
+        (Python, JavaScript, SQL, HTML, CSS) are named in any experience
+        bullet. React, Next.js and Node.js — the three technologies the
+        target channel asks for most — appear nowhere outside the list.
+        Highest-ROI CV edit available.
+  moderate:
+    - id: NO_METRICS
+      detail: "Zero quantification anywhere: no team size, user counts, latency, volume, or revenue."
+    - id: ML_THIN
+      detail: >
+        One student-scale Streamlit regression project supports the entire
+        Data & AI line. TensorFlow and OpenCV have no evidence at all.
+        AI/ML roles should not be targeted on this CV as written.
+
+preferences:
+  minimum_salary: null        # never interpret as 0
+  work_modes: [Remote, Hybrid]
+  employment_types: [Full-time, Contract, Freelance]
+  timezone: "Africa/Addis_Ababa"

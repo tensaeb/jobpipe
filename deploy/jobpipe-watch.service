@@ -1,0 +1,21 @@
+[Unit]
+Description=jobpipe Telegram watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jobpipe
+WorkingDirectory=/opt/jobpipe
+EnvironmentFile=/opt/jobpipe/.env
+ExecStart=/opt/jobpipe/.venv/bin/python -m jobpipe watch
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/jobpipe/data /opt/jobpipe/outbox
+
+[Install]
+WantedBy=multi-user.target

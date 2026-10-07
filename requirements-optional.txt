@@ -1,0 +1,6 @@
+-r requirements.txt
+# Live Telegram watcher. Without it, `jobpipe watch` exits with
+# "pip install telethon"; everything else works.
+telethon>=1.34
+# Local throwaway SMTP server for testing sends (RUNBOOK step 3).
+aiosmtpd>=1.4
