@@ -232,16 +232,46 @@ def _format_info(con, job_id: int) -> str:
     return "\n".join(lines)
 
 
-def send_bot_command_updates(con) -> None:
+def _bot_approve(con, job_id: int) -> dict:
+    """Approve a job from the bot path and record actor='bot'.
+
+    pipeline.approve() always records actor='user', so we apply the same
+    post-hoc UPDATE that the agent path uses to correct the actor label.
+    Bot-initiated decisions must not pollute the user-vs-agent training signal.
+    """
+    from .pipeline import approve as _pipeline_approve
+
+    res = _pipeline_approve(con, job_id)
+    # Override the actor written by approve() from 'user' to 'bot'.
+    con.execute(
+        "UPDATE decisions SET actor='bot' WHERE id=("
+        "  SELECT MAX(id) FROM decisions WHERE job_id=? AND action='APPROVE'"
+        ")",
+        (job_id,),
+    )
+    con.commit()
+    return res
+
+
+def send_bot_command_updates() -> None:
     """Polling loop: processes getUpdates and handles button presses and
     /approve N, /reject N, /info N commands. Runs blocking; call via
-    asyncio.to_thread or a thread."""
+    asyncio.to_thread or a thread.
+
+    Opens its own SQLite connection so the connection is always used on
+    the same thread — the default SQLite check_same_thread=True setting
+    rejects cross-thread access, and this function runs in a thread pool
+    spawned by asyncio.to_thread.
+    """
     import time
 
     if not (TG_BOT_TOKEN and TG_ALERT_CHAT_ID):
         return
 
-    from .pipeline import approve as _approve, reject as _reject
+    from .db import connect as _connect
+    from .pipeline import reject as _reject
+
+    con = _connect()
 
     offset = 0
     while True:
@@ -269,7 +299,7 @@ def send_bot_command_updates(con) -> None:
 
                 if kind == "approve":
                     try:
-                        res = _approve(con, job_id)
+                        res = _bot_approve(con, job_id)
                         _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
                                                          "text": f"Approved job {job_id}"})
                         caption = f"\u2705 Approved job {job_id} — materials ready"
@@ -314,7 +344,7 @@ def send_bot_command_updates(con) -> None:
             if m:
                 job_id = int(m.group(1))
                 try:
-                    res = _approve(con, job_id)
+                    res = _bot_approve(con, job_id)
                     caption = f"\u2705 Approved job {job_id} — materials ready"
                     if res.get("eml"):
                         _send_document(TG_ALERT_CHAT_ID, res["eml"], caption)
@@ -345,12 +375,17 @@ def send_bot_command_updates(con) -> None:
 async def start_bot_listener(con) -> None:
     """Async wrapper that runs the blocking polling loop in a thread.
     Launch with asyncio.create_task(start_bot_listener(con)) from the watcher.
-    Exceptions are caught and logged so a bot failure never kills the watcher."""
+    Exceptions are caught and logged so a bot failure never kills the watcher.
+
+    The con argument is kept for backwards compatibility but is no longer
+    used — send_bot_command_updates opens its own connection to satisfy
+    SQLite's thread-safety requirement.
+    """
     import asyncio
 
     if not (TG_BOT_TOKEN and TG_ALERT_CHAT_ID):
         return
     try:
-        await asyncio.to_thread(send_bot_command_updates, con)
+        await asyncio.to_thread(send_bot_command_updates)
     except Exception:  # noqa: BLE001
         log.exception("bot listener crashed")

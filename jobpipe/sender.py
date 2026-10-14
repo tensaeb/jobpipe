@@ -41,7 +41,10 @@ def build_message(to_addr: str, subject: str, body: str, cv_variant: str | None)
     msg["To"] = to_addr
     msg["Subject"] = subject
     msg["Date"] = formatdate(localtime=True)
-    msg["Message-ID"] = make_msgid(domain=SENDER_EMAIL.rsplit("@", 1)[-1])
+    # Guard against an empty SENDER_EMAIL (the default): make_msgid("") produces
+    # a malformed Message-ID like "<...@>" that fails RFC 5321 checks.
+    _domain = SENDER_EMAIL.rsplit("@", 1)[-1] if "@" in SENDER_EMAIL else "localhost.localdomain"
+    msg["Message-ID"] = make_msgid(domain=_domain)
     msg["Reply-To"] = SENDER_EMAIL
     msg.set_content(body)
     if cv_variant:
