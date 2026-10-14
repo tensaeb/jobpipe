@@ -31,6 +31,164 @@ python3 -m jobpipe agent            # interactive AI agent over your queue
 python3 -m jobpipe triage           # agent verdicts for every undecided job
 ```
 
+## Virtualenv setup
+
+Always run jobpipe inside a virtual environment so its dependencies don't
+conflict with anything else on your machine.
+
+```bash
+# create once
+python3 -m venv .venv
+
+# activate — do this every time you open a new terminal
+source .venv/bin/activate          # macOS / Linux
+# .venv\Scripts\activate           # Windows
+
+# install deps
+pip install -r requirements.txt
+pip install -r requirements-optional.txt   # for the live Telegram watcher
+
+# verify
+python3 -m jobpipe stats
+```
+
+Your `.venv/` folder is gitignored. To leave the environment: `deactivate`.
+
+**Using `uv` (faster alternative to pip):**
+
+```bash
+pip install uv
+uv venv .venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+uv pip install -r requirements-optional.txt
+```
+
+**Python version:** 3.10 or newer. Check with `python3 --version`.
+
+## Free deployment (always-on watcher)
+
+The watcher must run 24/7 to catch posts the moment they appear. It uses
+~50 MB RAM and no GPU. Several platforms host it for free.
+
+### Option A — Railway (recommended, easiest)
+
+Railway's free Hobby tier gives 500 hours/month — enough for one always-on
+process.
+
+1. Push your fork to GitHub (private repo is fine).
+2. Go to [railway.app](https://railway.app) → New Project → Deploy from GitHub repo.
+3. Set the start command: `python3 -m jobpipe watch --backfill 50`
+4. Add your environment variables under **Variables**:
+   ```
+   TELEGRAM_API_ID=...
+   TELEGRAM_API_HASH=...
+   TELEGRAM_BOT_TOKEN=...
+   TELEGRAM_USER_ID=...
+   LLM_PROVIDER=gemini
+   GEMINI_API_KEY=...
+   SENDER_EMAIL=...
+   SENDER_APP_PASSWORD=...
+   ```
+5. Deploy. Railway streams logs live; the watcher alerts your phone via Telegram.
+
+> ⚠️ `telegram.session` is a login credential. Never commit it. Upload it as a
+> Railway volume or generate it by running `watch` once locally first and
+> copying the session string into an env var (use `telethon.sessions.StringSession`).
+
+### Option B — Render (free tier, sleeps after 15 min inactivity)
+
+Render's free Web Service spins down after 15 minutes of inactivity, which
+breaks the watcher. Use a **Background Worker** instead — it stays up.
+
+1. Connect your GitHub repo at [render.com](https://render.com).
+2. New → Background Worker.
+3. Start command: `python3 -m jobpipe watch --backfill 50`
+4. Add the same env vars as above.
+5. Free tier gives 750 hours/month.
+
+### Option C — Fly.io (free allowance, more control)
+
+```bash
+# install flyctl
+brew install flyctl         # macOS
+flyctl auth login
+
+# from the repo root (Dockerfile is already included)
+flyctl launch               # follow prompts, pick the free shared-cpu-1x plan
+flyctl secrets set TELEGRAM_API_ID=... TELEGRAM_API_HASH=... GEMINI_API_KEY=...
+flyctl deploy
+flyctl logs                 # tail live output
+```
+
+Fly's free tier covers 3 shared-CPU VMs and 3 GB persistent storage. Store
+`telegram.session` in a Fly volume so it survives redeploys:
+
+```bash
+flyctl volumes create jobpipe_data --size 1   # 1 GB
+# mount it at /app/data in fly.toml, then point DATA_DIR=/app/data in secrets
+```
+
+### Option D — Your own Linux VPS (most control)
+
+Any cheap VPS (Oracle Cloud free tier, Hetzner CX11, DigitalOcean $4/mo) works.
+A systemd unit and a launchd plist are in `deploy/` for Linux and macOS
+respectively. Full walkthrough: **`RUNBOOK.md`**.
+
+```bash
+# quick start on a fresh Ubuntu VPS
+git clone https://github.com/yourname/jobpipe && cd jobpipe
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt -r requirements-optional.txt
+cp .env.example .env && nano .env          # fill in your secrets
+sudo cp deploy/jobpipe-watch.service /etc/systemd/system/
+sudo systemctl enable --now jobpipe-watch
+sudo journalctl -u jobpipe-watch -f        # tail logs
+```
+
+### Splitting watcher and LLM
+
+The watcher runs 24/7 with minimal RAM. The LLM is only called on-demand
+during `process`. You can run both on the same free dyno, or point
+`LLM_BASE_URL` at a separate free Groq/Gemini API endpoint so the watcher
+host never needs LLM credentials.
+
+## Staying updated
+
+```bash
+# pull the latest changes
+git pull origin main
+
+# re-install in case deps changed
+pip install -r requirements.txt
+pip install -r requirements-optional.txt
+
+# check for breaking changes
+python3 selftest.py            # should pass all checks
+```
+
+**If you deployed to Railway / Render / Fly:** push to your GitHub repo and
+the platform redeploys automatically (if you connected via GitHub). For
+fly.io: `flyctl deploy`.
+
+**Database migrations:** jobpipe uses SQLite and applies schema changes
+automatically on startup via `db.py`. You don't need to run migrations
+manually, but back up `data/jobpipe.db` before a major update:
+
+```bash
+cp data/jobpipe.db data/jobpipe.db.bak
+git pull && pip install -r requirements.txt
+python3 -m jobpipe stats        # triggers any pending migrations
+```
+
+**Keeping your profile in sync:** `profile.yaml` is gitignored and never
+overwritten by a pull. After a major update, compare it against
+`profile.example.yaml` for any new fields:
+
+```bash
+diff profile.example.yaml profile.yaml
+```
+
 `python3 selftest.py` → 69 behavioural assertions, no network (a local mock
 OpenAI server is spun up in-process for the agent loop).
 
@@ -196,11 +354,3 @@ Streamlit dashboard, Supabase, n8n, Oracle hosting, GitHub Actions, auto-apply, 
 ## Deploying
 
 `RUNBOOK.md` has the step-by-step. Short version: the watcher must be 24/7 (~50 MB RAM), the LLM does not — split them. launchd plist and a hardened systemd unit are in `deploy/`; `Dockerfile` + `docker-compose.yml` at the root.
-
-## Next
-
-1. **Fix the CV** (`cv-findings.md`) — worth more than anything here.
-2. Drop 4 variants into `cv/`: `cv_fullstack.docx`, `cv_frontend.docx`, `cv_backend.docx`, `cv_ai_ml.docx`, `cv_mobile.docx`.
-3. Clear `BETA_DATES` from `profile.yaml` to unlock `APPLY`.
-4. Add your GitHub URL to `profile.yaml` to clear `PROFILE_GAP`.
-5. `watch --backfill 100`, then triage for a week before touching the scoring weights.
