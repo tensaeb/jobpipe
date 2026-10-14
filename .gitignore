@@ -24,3 +24,6 @@ venv/
 .DS_Store
 .vscode/
 .idea/
+
+# Git bundle (full history) — must never be committed
+jobpipe.bundle

@@ -119,7 +119,9 @@ def process_post(con, post_id: int, alert: bool = True) -> int | None:
     job_id = cur.lastrowid
 
     if alert and not dupe_of and match.score >= ALERT_MIN_SCORE:
-        notify.send(notify.format_alert(job_id, match, parsed, cv, post["url"]))
+        notify.send_with_buttons(job_id, notify.format_alert(
+            job_id, match, parsed, cv, post["url"], include_commands=False
+        ))
 
     return job_id
 
@@ -157,7 +159,8 @@ def _rebuild_match(con, job_id: int):
                      ul(r["blockers_json"]), ul(r["flags_json"]), r["evidence_depth"] or 0.0)
 
 
-def record_decision(con, job_id: int, action: str, reason: str | None = None):
+def record_decision(con, job_id: int, action: str, reason: str | None = None,
+                    actor: str = "user"):
     r = con.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     features = {
         "required": ul(r["required_json"]),
@@ -170,9 +173,9 @@ def record_decision(con, job_id: int, action: str, reason: str | None = None):
         "extracted_by": r["extracted_by"],
     }
     con.execute(
-        "INSERT INTO decisions(job_id,action,reason,score,bucket,features,decided_at)"
-        " VALUES(?,?,?,?,?,?,?)",
-        (job_id, action, reason, r["score"], r["bucket"], jl(features), now()),
+        "INSERT INTO decisions(job_id,action,reason,score,bucket,features,decided_at,actor)"
+        " VALUES(?,?,?,?,?,?,?,?)",
+        (job_id, action, reason, r["score"], r["bucket"], jl(features), now(), actor),
     )
     con.commit()
 
@@ -187,10 +190,18 @@ def approve(con, job_id: int) -> dict:
         )
     post = con.execute("SELECT * FROM posts WHERE id=?", (row["post_id"],)).fetchone()
 
+    # Re-extract subject_instruction from the post body using a fast regex-only
+    # call — no LLM, no new DB column, no migration needed.
+    from .extract import regex_extract as _re_extract
+    _parsed_quick = _re_extract(post["body"])
+    subject_instr = _parsed_quick.subject_instruction
+
     hard_blocks = [f for f in ul(row["flags_json"]) if f.startswith("BLOCKED:")]
-    body = compose.write_body(match, post["body"])
-    subject = compose.subject_for(match)
-    eml = compose.build_eml(job_id, match, body, row["application_email"], row["cv_variant"])
+    body = compose.write_body(match, post["body"],
+                              required_materials=ul(row["materials_json"]))
+    subject = compose.subject_for(match, subject_instr)
+    eml = compose.build_eml(job_id, match, body, row["application_email"],
+                            row["cv_variant"], subject_instruction=subject_instr)
 
     due = (datetime.now(timezone.utc) + timedelta(days=5)).date().isoformat()
     con.execute(
@@ -200,7 +211,7 @@ def approve(con, job_id: int) -> dict:
     )
     con.execute("UPDATE jobs SET status='MATERIALS_READY' WHERE id=?", (job_id,))
     con.commit()
-    record_decision(con, job_id, "APPROVE")
+    record_decision(con, job_id, "APPROVE", actor="user")
 
     return {
         "job_id": job_id, "eml": str(eml), "subject": subject,
@@ -209,10 +220,10 @@ def approve(con, job_id: int) -> dict:
     }
 
 
-def reject(con, job_id: int, reason: str | None = None):
+def reject(con, job_id: int, reason: str | None = None, actor: str = "user"):
     con.execute("UPDATE jobs SET status='REJECTED' WHERE id=?", (job_id,))
     con.commit()
-    record_decision(con, job_id, "REJECT", reason)
+    record_decision(con, job_id, "REJECT", reason, actor=actor)
 
 
 def mark_sent(con, job_id: int):

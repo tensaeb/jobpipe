@@ -21,7 +21,7 @@ cd "$(dirname "$0")/.."
 
 # --- 1. refuse to push secrets -------------------------------------------
 echo "==> checking for sensitive files in the index"
-LEAKS=$(git ls-files | grep -E 'profile\.yaml|(^|/)\.env$|\.session|\.db$|^cv/|^outbox/|^uploads/|credentials/' || true)
+LEAKS=$(git ls-files | grep -E 'profile\.yaml|(^|/)\.env$|\.session|\.db$|^cv/|^outbox/|^uploads/|credentials/|\.bundle$' || true)
 if [ -n "$LEAKS" ]; then
   echo "ABORT — these would be published:"
   echo "$LEAKS" | sed 's/^/    /'

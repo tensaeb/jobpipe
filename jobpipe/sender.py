@@ -84,6 +84,21 @@ def send_one(con, job_id: int, *, manual: bool = False, force_dry: bool | None =
     )
     has_cv = any(part.get_filename() for part in msg.iter_attachments())
 
+    # Verify the recipient address was present in the original post text —
+    # guards against an LLM-supplied address that never appeared in the post.
+    post_row = con.execute(
+        "SELECT p.body FROM posts p JOIN jobs j ON j.post_id = p.id WHERE j.id=?",
+        (job_id,),
+    ).fetchone()
+    if post_row and job["application_email"]:
+        if job["application_email"].lower() not in (post_row["body"] or "").lower():
+            log.warning(
+                "job %s: recipient %r does not appear in the original post text "
+                "(address may be LLM-supplied — verify before sending)",
+                job_id,
+                job["application_email"],
+            )
+
     if dry:
         return {
             "job_id": job_id, "sent": False, "dry_run": True,

@@ -37,15 +37,15 @@ LLM_PROVIDERS: dict[str, dict] = {
     "ollama":     {"base_url": "http://localhost:11434/v1",
                    "model": "qwen3:8b", "key_env": []},
     "gemini":     {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-                   "model": "gemini-3.8-flash",
+                   "model": "gemini-2.0-flash",
                    "key_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]},
     "groq":       {"base_url": "https://api.groq.com/openai/v1",
                    "model": "llama-3.3-70b-versatile", "key_env": ["GROQ_API_KEY"]},
     "openrouter": {"base_url": "https://openrouter.ai/api/v1",
-                   "model": "nvidia/nemotron-3-super-120b-a12b:free",
+                   "model": "nvidia/llama-3.1-nemotron-70b-instruct:free",
                    "key_env": ["OPENROUTER_API_KEY"]},
     "cerebras":   {"base_url": "https://api.cerebras.ai/v1",
-                   "model": "qwen-3.8-27b", "key_env": ["CEREBRAS_API_KEY"]},
+                   "model": "qwen-3-32b", "key_env": ["CEREBRAS_API_KEY"]},
     "mistral":    {"base_url": "https://api.mistral.ai/v1",
                    "model": "mistral-small-latest", "key_env": ["MISTRAL_API_KEY"]},
     "openai":     {"base_url": "https://api.openai.com/v1",
@@ -85,7 +85,7 @@ AGENT_MAX_TURNS = int(os.getenv("AGENT_MAX_TURNS", "12"))  # tool loop bound
 
 # --- behaviour -------------------------------------------------------------
 ALERT_MIN_SCORE = int(os.getenv("ALERT_MIN_SCORE", "40"))  # REVIEW and up
-DEDUP_FUZZ = int(os.getenv("DEDUP_FUZZ", "92"))
+DEDUP_FUZZ = int(os.getenv("DEDUP_FUZZ", "82"))  # token_sort_ratio threshold (was 92 for token_set_ratio)
 MAX_POST_AGE_DAYS = int(os.getenv("MAX_POST_AGE_DAYS", "21"))
 
 # --- sending (auto-apply) --------------------------------------------------
@@ -109,8 +109,8 @@ SMTP_STARTTLS = _b("SMTP_STARTTLS", "true")      # off only for a local test ser
 SMTP_AUTH = _b("SMTP_AUTH", "true")
 
 # Identity used in generated application emails.
-SENDER_NAME = os.getenv("SENDER_NAME", "Tensae Befekadu Zeleke")
-SENDER_EMAIL = os.getenv("SENDER_EMAIL", "tensaeb2017@gmail.com")
+SENDER_NAME = os.getenv("SENDER_NAME", "Your Name")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL", "")
 
 for d in (DB_PATH.parent, OUTBOX):
     d.mkdir(parents=True, exist_ok=True)

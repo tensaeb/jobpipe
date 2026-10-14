@@ -25,6 +25,7 @@ class ParsedJob(BaseModel):
     deadline_text: str | None = None
     urgency: Literal["explicit_deadline", "immediate", "none"] = "none"
     required_materials: list[str] = Field(default_factory=list)
+    subject_instruction: str | None = None
 
     @field_validator("required_skills", "preferred_skills", "required_materials",
                      "contact_emails", mode="before")

@@ -68,6 +68,12 @@ TITLE_RE = re.compile(
     re.I,
 )
 
+# Subject-line instruction pattern (e.g. "Subject: Application for {Role} - [Your Name]")
+_SUBJ_RE = re.compile(
+    r"(?:email\s+)?subject\s*(?:line)?\s*[:\-]\s*(.{10,120})",
+    re.I,
+)
+
 
 def _skill_gazetteer() -> dict[str, str]:
     """Build a surface-form -> canonical-name map from the fact bank."""
@@ -253,6 +259,11 @@ def regex_extract(text: str) -> ParsedJob:
     if lm:
         loc = re.split(r"[\n|•·(]", lm.group(1))[0].strip(" -–—*_")[:60] or None
 
+    subject_instr = None
+    sm2 = _SUBJ_RE.search(text)
+    if sm2:
+        subject_instr = sm2.group(1).strip()
+
     skills = find_skills(text)
     required, preferred = _split_required_preferred(text, skills)
 
@@ -275,6 +286,7 @@ def regex_extract(text: str) -> ParsedJob:
         deadline_text=deadline,
         urgency=urgency,
         required_materials=materials,
+        subject_instruction=subject_instr,
     )
 
 
@@ -295,7 +307,7 @@ Return a JSON object with exactly these keys:
 title, company, location, remote, employment_type, min_years, max_years,
 required_skills, preferred_skills, salary_raw, application_email,
 application_telegram, application_url, deadline_text, urgency,
-required_materials
+required_materials, subject_instruction
 
 employment_type must be one of: Full-time, Part-time, Contract, Freelance,
 Internship, or null. urgency must be one of: explicit_deadline, immediate, none.

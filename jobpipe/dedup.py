@@ -17,25 +17,28 @@ from rapidfuzz import fuzz
 
 from .config import DEDUP_FUZZ
 
-_URL = re.compile(r"https?://\S+")
-_HANDLE = re.compile(r"@[A-Za-z0-9_]{4,32}")
-_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# Strip job-board links but keep t.me/ and wa.me/ contact handles.
+_JOB_URL = re.compile(r"https?://(?!t\.me/)(?!wa\.me/)\S+")
 _NONWORD = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
 # Channel furniture that changes between otherwise-identical reposts.
 _NOISE = re.compile(
-    r"(join\s+us|share\s+with\s+friends|#\w+|apply\s+fast|t\.me/\S+|"
+    r"(join\s+us|share\s+with\s+friends|#\w+|apply\s+fast|"
     r"forwarded\s+from.*|follow\s+@\S+|\bshare\b)",
     re.I,
 )
 
 
 def normalize_body(text: str) -> str:
-    """Aggressively normalize so cosmetic repost edits collapse together."""
+    """Aggressively normalize so cosmetic repost edits collapse together.
+
+    # Emails and @handles are kept so two different recruiters using the same
+    # template do not collapse into one. Only non-contact job-board URLs are
+    # stripped; t.me/ and wa.me/ recruiter contacts are preserved.
+    """
     t = text.lower()
-    t = _URL.sub(" ", t)
-    t = _EMAIL.sub(" ", t)
-    t = _HANDLE.sub(" ", t)
+    t = _JOB_URL.sub(" ", t)
+    # NOTE: _EMAIL and _HANDLE are intentionally NOT applied here — see above.
     t = _NOISE.sub(" ", t)
     t = _NONWORD.sub(" ", t)
     return _WS.sub(" ", t).strip()
@@ -70,7 +73,17 @@ def find_near_duplicate(con, text: str, exclude_post_id: int | None = None):
     for r in rows:
         if exclude_post_id is not None and r["id"] == exclude_post_id:
             continue
-        s = fuzz.token_set_ratio(norm, normalize_body(r["body"]))
+        norm_other = normalize_body(r["body"])
+        shorter = min(len(norm), len(norm_other))
+        longer = max(len(norm), len(norm_other))
+        # Length guard: token_sort_ratio prevents "A B C" scoring 100 against
+        # "A B C D E" (token_set_ratio does this). The length guard prevents a
+        # 20-word post from being flagged as a near-dup of a 200-word unrelated
+        # one.
+        if longer == 0 or shorter / longer < 0.6:
+            continue
+        # token_sort_ratio is immune to subset-containment false-positives.
+        s = fuzz.token_sort_ratio(norm, norm_other)
         if s > best_score:
             best, best_score = r["id"], s
     if best is not None and best_score >= DEDUP_FUZZ:

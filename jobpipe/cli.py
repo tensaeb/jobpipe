@@ -166,6 +166,15 @@ def cmd_followups(args, con):
     for r in rows:
         print(f"job {r['job_id']:>4}  due {r['follow_up_due']}  "
               f"{(r['title'] or '?')[:34]:<35} {r['application_email'] or '-'}")
+    from . import notify
+    lines = ["\U0001f4c5 Follow-ups due:"]
+    for r in rows:
+        lines.append(
+            f"  job {r['job_id']}  {r['follow_up_due']}  "
+            f"{(r['title'] or '?')[:30]}  {r['application_email'] or '-'}"
+            f"\n  \u2192 jobpipe reply {r['job_id']} --status ..."
+        )
+    notify.send("\n".join(lines))
 
 
 def cmd_reject(args, con):
@@ -173,6 +182,21 @@ def cmd_reject(args, con):
     print(f"rejected {args.id}" + (f" ({args.reason})" if args.reason else ""))
 
 
+VALID_STATUSES = ("interview", "offer", "rejected", "ghosted")
+
+
+def cmd_reply(args, con):
+    """Record an employer's response to a sent application."""
+    if args.status not in VALID_STATUSES:
+        sys.exit(f"status must be one of: {', '.join(VALID_STATUSES)}")
+    n = con.execute(
+        "UPDATE applications SET response_status=? WHERE job_id=?",
+        (args.status, args.id),
+    ).rowcount
+    if n == 0:
+        sys.exit(f"no application found for job {args.id}")
+    con.commit()
+    print(f"job {args.id}: response_status set to '{args.status}'")
 def cmd_sent(args, con):
     mark_sent(con, args.id)
     print(f"job {args.id} marked SENT")
@@ -276,6 +300,18 @@ def cmd_llmtest(args, con):
     if res["ok"]:
         print(f"reachable : yes ({res['latency_ms']} ms)")
         print(f"reply     : {res['reply']!r}")
+        # Check whether the model name was confirmed in the provider's list.
+        try:
+            model_list = llm._get_client().models.list()
+            ids = [m.id for m in (model_list.data if hasattr(model_list, "data")
+                                   else list(model_list))]
+            if ids:
+                found = res["model"] in ids
+                print(f"model in list : {'yes' if found else 'NO — not found in provider list'}")
+            else:
+                print("model in list : (provider returned empty list — cannot verify)")
+        except Exception as e:
+            print(f"model in list : (could not fetch model list: {e})")
     else:
         print(f"reachable : NO — {res['error']}")
         sys.exit(1)
@@ -284,6 +320,17 @@ def cmd_llmtest(args, con):
 
 def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    from .config import LLM_ENABLED
+    if LLM_ENABLED != "off":
+        from . import llm as _llm
+        if not _llm.available() and LLM_ENABLED == "on":
+            print(
+                "WARNING: LLM_ENABLED=on but the LLM provider is not reachable "
+                "or the model was not found. Run `jobpipe llm-test` for details.",
+                file=sys.stderr,
+            )
+
     ap = argparse.ArgumentParser(prog="jobpipe")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -340,6 +387,12 @@ def main(argv=None):
 
     s = sub.add_parser("followups", help="applications awaiting a nudge")
     s.set_defaults(fn=cmd_followups)
+
+    s = sub.add_parser("reply", help="record an employer's response")
+    s.add_argument("id", type=int)
+    s.add_argument("--status", required=True,
+                   choices=["interview", "offer", "rejected", "ghosted"])
+    s.set_defaults(fn=cmd_reply)
 
     s = sub.add_parser("stats")
     s.set_defaults(fn=cmd_stats)

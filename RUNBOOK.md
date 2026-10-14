@@ -75,8 +75,9 @@ Expected tail:
   PASS  no-recipient job blocked
   PASS  unknown job id handled
 
-39 passed, 0 failed
+69 passed, 0 failed
 ```
+*(67 if the `openai` package is not installed — the mock-server block is skipped)*
 
 If anything fails, stop here — don't connect Telegram or SMTP yet.
 

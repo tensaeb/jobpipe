@@ -266,6 +266,15 @@ class Agent:
                 return {"error": f"job {job_id} already has an APPROVE decision "
                                  "(idempotency guard)"}
             res = approve(self.con, job_id)  # raises ValueError when quarantined
+            # approve() records actor='user' by default; override to 'agent'.
+            # SQLite doesn't support ORDER BY in UPDATE, so use a subquery.
+            self.con.execute(
+                "UPDATE decisions SET actor='agent' WHERE id=("
+                "  SELECT MAX(id) FROM decisions WHERE job_id=? AND action='APPROVE'"
+                ")",
+                (job_id,),
+            )
+            self.con.commit()
             reasons, _ = policy.check(self.con, job_id)
             return {"ok": True, "action": "approve", "job_id": job_id,
                     "eml": res["eml"], "subject": res["subject"], "cv": res["cv"],
@@ -273,7 +282,8 @@ class Agent:
                     "send_still_blocked_by": reasons or [],
                     "note": "materials generated; nothing was sent — the human presses Send"}
         if action == "reject":
-            reject(self.con, job_id, f"agent: {reason}".strip() if reason else "agent")
+            reject(self.con, job_id, f"agent: {reason}".strip() if reason else "agent",
+                   actor="agent")
             return {"ok": True, "action": "reject", "job_id": job_id,
                     "logged": True, "note": "rejection logged to the decisions feedback loop"}
         return {"error": f"unknown action {action!r}; use approve or reject"}
@@ -358,7 +368,7 @@ def triage(con, *, limit: int = 20, act: bool = False) -> list[dict]:
                 if verdict.decision == "approve":
                     approve(con, r["id"])
                 else:
-                    reject(con, r["id"], f"agent: {verdict.reason}")
+                    reject(con, r["id"], f"agent: {verdict.reason}", actor="agent")
                 item["applied"] = True
                 item["sent"] = False
             except ValueError as e:  # quarantined, etc.

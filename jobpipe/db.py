@@ -99,6 +99,12 @@ def connect() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    # Safe migration: add actor column if the DB predates this change.
+    try:
+        con.execute("ALTER TABLE decisions ADD COLUMN actor TEXT")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
     return con
 
 

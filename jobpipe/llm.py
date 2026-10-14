@@ -78,7 +78,20 @@ def available() -> bool:
     if _probe_result is not None:
         return _probe_result
     try:
-        _get_client().models.list()
+        model_list = _get_client().models.list()
+        # Only warn when the provider returned a non-empty list and the
+        # configured model isn't in it.
+        ids = [m.id for m in (model_list.data if hasattr(model_list, "data")
+                               else list(model_list))]
+        if ids and LLM_MODEL not in ids:
+            log.warning(
+                "LLM model %r not found in provider's model list "
+                "(available: %s ...). Falling back to regex-only.",
+                LLM_MODEL,
+                ", ".join(ids[:5]),
+            )
+            _probe_result = False
+            return False
         _probe_result = True
     except Exception as first:  # noqa: BLE001  # some gateways omit /models
         log.debug("models.list probe failed (%s); trying a 1-token chat", first)
