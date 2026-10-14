@@ -60,11 +60,24 @@ MATERIALS = [
     (re.compile(r"\bavailability\b", re.I), "Availability"),
 ]
 TITLE_RE = re.compile(
-    r"\b((?:senior|junior|lead|mid[- ]?level)?\s*"
+    r"\b("
+    # Leadership / management titles (checked first so "Lead Engineer" doesn't
+    # partially match the IC pattern below)
+    r"(?:chief\s+technology\s+officer|cto"
+    r"|vp\s+(?:of\s+)?engineering|vice\s+president\s+(?:of\s+)?engineering"
+    r"|(?:engineering|technical)\s+manager"
+    r"|(?:tech(?:nical)?|engineering)\s+lead"
+    r"|(?:senior\s+)?staff\s+engineer"
+    r"|principal\s+engineer"
+    r"|(?:head|director)\s+of\s+(?:engineering|technology|product))"
+    r"|"
+    # IC / contributor titles
+    r"(?:(?:senior|junior|lead|mid[- ]?level)?\s*"
     r"(?:full[- ]?stack|front[- ]?end|back[- ]?end|mobile|software|web|ai|ml|"
     r"machine learning|react native|react|node|python|django|flutter|qa|devops|"
     r"ui/?ux)\s*"
-    r"(?:developer|engineer|designer|programmer)s?)\b",
+    r"(?:developer|engineer|designer|programmer)s?)"
+    r")\b",
     re.I,
 )
 
@@ -344,4 +357,8 @@ def extract(text: str) -> tuple[ParsedJob, str]:
     knownp = {s.lower() for s in merged.preferred_skills} | known
     merged.preferred_skills += [s for s in refined.preferred_skills if s.lower() not in knownp]
     merged.required_materials = sorted(set(merged.required_materials) | set(refined.required_materials))
+    # subject_instruction: prefer the LLM parse when the regex found nothing,
+    # since the LLM handles prose phrasings the regex misses.
+    if merged.subject_instruction is None and refined.subject_instruction:
+        merged.subject_instruction = refined.subject_instruction
     return merged, "regex+llm"

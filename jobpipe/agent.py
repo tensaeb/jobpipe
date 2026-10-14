@@ -367,6 +367,15 @@ def triage(con, *, limit: int = 20, act: bool = False) -> list[dict]:
             try:
                 if verdict.decision == "approve":
                     approve(con, r["id"])
+                    # approve() always records actor='user'; correct it to 'agent'
+                    # so batch-triaged approvals don't contaminate the training signal.
+                    con.execute(
+                        "UPDATE decisions SET actor='agent' WHERE id=("
+                        "  SELECT MAX(id) FROM decisions WHERE job_id=? AND action='APPROVE'"
+                        ")",
+                        (r["id"],),
+                    )
+                    con.commit()
                 else:
                     reject(con, r["id"], f"agent: {verdict.reason}", actor="agent")
                 item["applied"] = True

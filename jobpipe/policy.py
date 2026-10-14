@@ -119,6 +119,16 @@ def check(con, job_id: int, *, manual: bool = False) -> tuple[list[str], dict]:
         if not cv.exists():
             reasons.append(f"CV variant {app['cv_variant']} missing from {CV_DIR}")
 
+    # --- unfilled placeholder check ----------------------------------------
+    # write_body() appends [YOUR ANSWER: ...] markers when a post requests
+    # salary, notice period, GitHub, etc. Transmitting these to recruiters
+    # would be embarrassing — block until the user fills them in the .eml.
+    if app is not None and app["email_body"] and "[YOUR ANSWER:" in (app["email_body"] or ""):
+        reasons.append(
+            "email body contains unfilled [YOUR ANSWER: ...] placeholders — "
+            "edit the .eml before sending"
+        )
+
     # --- don't spam the same employer ---------------------------------------
     if job["company"]:
         prior = con.execute(

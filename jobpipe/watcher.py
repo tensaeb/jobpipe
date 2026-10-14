@@ -154,7 +154,7 @@ async def run(backfill: int = 0):
             entity = await client.get_entity(ch)
             async for m in client.iter_messages(entity, limit=backfill):
                 if m.message:
-                    if m.date and m.date.replace(tzinfo=timezone.utc) < cutoff:
+                    if m.date and m.date.astimezone(timezone.utc) < cutoff:
                         log.info(
                             "backfill: skipping post older than %d days", MAX_POST_AGE_DAYS
                         )
