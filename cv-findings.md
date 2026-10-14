@@ -1,127 +1,128 @@
-# CV ingested — fact bank built, and the §2 fit table does not survive contact with it
+# CV findings — updated for new CV (October 2026)
 
-Files produced:
+Files updated this session:
 
-| File | What it is |
+| File | What changed |
 |---|---|
-| `profile.yaml` | Canonical fact bank. Every claim traceable to a CV line; 51 skills tiered by evidence strength |
-| `matcher.py` | Deterministic matcher. No LLM, three buckets, flags-not-rejects |
-| `rescore.py` | Re-runs the plan's §2 role list against the real CV |
+| `profile.yaml` | OneTap role removed; CTO at Nodelala PLC added; Angular/Flutter/Dart/Spring Boot moved to `listed`; GitHub URL populated; experience totals updated |
+| `cv-findings.md` | This file — rewritten to reflect new CV state |
+| `matcher.py` | Aliases added: Angular variants, Spring Boot variants, FastAPI, Prisma confirmed |
 
 ---
 
-## 1. The thing nobody flagged: you have a 10-month employment gap
+## What changed from the old CV to the new one
 
-Your CV's most recent role, Beta Tech Hub, ends **December 2025**. Today is **October 2026**.
+| Item | Old CV | New CV |
+|---|---|---|
+| OneTap Technologies | Present (Sep 2023 – May 2024) | **Removed** |
+| Nodelala PLC (CTO) | Absent | **Added — currently employed** |
+| Employment gap | 10-month gap (Dec 2025 → Oct 2026) | **Resolved** — CTO role is ongoing |
+| GitHub URL | Missing | `https://github.com/tensaeb` — now in profile |
+| Angular | `absent` (hard negative) | Moved to `listed` (competencies list) |
+| Flutter | `absent` (hard negative) | Moved to `listed` (competencies list) |
+| Dart | `absent` (hard negative) | Moved to `listed` (competencies list) |
+| Spring Boot | Not in file | Added as `listed` |
 
-Nothing in the CV addresses the intervening 10 months. This is the first thing any reviewer notices, it will be the first question in any screen, and it is not mentioned anywhere in the 45-section plan or its fit analysis. It outranks every architectural decision in that document.
+The `PROFILE_GAP` flag (no GitHub) that appeared on every job will no longer fire. The `EMPLOYMENT_GAP` critical item is removed — the CTO role is ongoing.
 
-And it compounds with the date conflict from §16. If the employment letter (Oct 10 2024 – Apr 22 2025) is the accurate record rather than the CV (Sept 2024 – Dec 2025):
+---
+
+## Evidence-tier scoring
+
+`profile.yaml` tiers every skill by the strength of evidence behind it. The matcher weights matches accordingly so a post that aligns only with the competencies list scores lower than one aligned with the experience bullets.
+
+| Tier | Meaning | Weight |
+|---|---|---|
+| `named` | Named explicitly in an employment bullet | 1.00 |
+| `inferred` | Role scope strongly implies it; technology unnamed | 0.70 |
+| `project` | Portfolio project only | 0.60 |
+| `listed` | Competencies list only — no narrative backing | 0.35 |
+
+`listed` is not a lie — it is an unevidenced claim. A technical screen will probe it. The matcher must not treat it as production depth.
+
+---
+
+## Key strengths (new CV)
+
+**Full-stack web development** — 4+ years across web platforms. React, Node.js, Python, Django are on the competencies list. The CTO and Team Leader roles provide strong inferred evidence for frontend and backend depth even without explicit technology names in bullets.
+
+**Leadership and management** — CTO at Nodelala PLC (Sep 2024 – present) and Team Leader at Beta Tech Hub. Both roles evidence team management, code review, sprint planning, and engineering standards. This is the strongest single upgrade from the old CV.
+
+**Property management platforms** — RBAC, financial tracking, and automated notifications in BETA_01; full-stack property platform in NODELALA_01; cross-platform architecture as CTO.
+
+**E-commerce** — Global Trade House and Efoyita (B2B/B2C) built at Beta Tech Hub.
+
+**Government / public sector** — EFDP Ministry of Transport: large-scale logistics platform, responsive public site, multi-role admin dashboard with RBAC.
+
+**Education tech** — Sek'ela SIMS (Student/School Information Management System) at Line Addis; only role with explicit testing and code-review evidence.
+
+**Mobile / cross-platform** — iOS and Android deployment overseeing releases as CTO (CTO_03). React Native, Flutter, Dart now on competencies list.
+
+**Backend systems** — Moogter.com backend: database model design and client-server APIs for a social platform.
+
+---
+
+## Still-valid warnings
+
+### BLOCK_SENDING — BETA_DATES conflict (critical, unresolved)
+
+The Beta Tech Hub dates conflict remains unresolved and the matcher still appends a `BLOCKED` flag to every job until it is fixed.
 
 | | CV as written | If the letter is right |
 |---|---|---|
 | Beta Tech Hub tenure | 16 months | 6.5 months |
-| Total experience | 48 months (**"4+ years"** ✓) | ~38 months (**3.2 years** ✗) |
-| Employment gap | 10 months | **18 months** |
+| Impact on total | Moderate | "4+ years" headline may be unsupportable |
 
-The "4+ years" headline on your CV is load-bearing for most of the roles in that channel, and under one of the two documents you hold, it isn't true. `profile.yaml` marks this `action: BLOCK_SENDING`, so the matcher appends a `BLOCKED` flag to every single job until you resolve it. Resolve it by hand today.
+Resolve this manually before any application is sent. No software change resolves it.
 
----
+### UNNAMED_STACK (critical)
 
-## 2. The §2 fit scores were measuring your skills *list*, not your experience
+30+ technologies are claimed in Technical Competencies. Very few are named in any experience bullet. React, Next.js, and Node.js — the three skills the target channel asks for most — appear nowhere outside the competencies list.
 
-Here's the finding that invalidates the original table. Your CV names **30+ technologies** in Technical Competencies. Your experience bullets name **five**: Python, JavaScript, SQL, HTML, CSS.
+The matcher will score these at tier `listed` (weight 0.35). A post requiring React + Node.js will produce a shallow match with low evidence depth, flagged as `SHALLOW_EVIDENCE`.
 
-**React, Next.js, and Node.js — the three technologies this channel asks for most — appear nowhere outside the competencies list.** No bullet says you shipped anything with them. The EFDP Ministry of Transport work says "Frontend Developer... responsive public-facing site and a multi-role admin dashboard" without naming a single framework.
+**Highest-ROI CV edit still available:** name the stack in experience bullets. No new claims required — just make explicit what you actually used.
 
-So `profile.yaml` tiers every skill by evidence strength — `named` (1.00) / `inferred` (0.70) / `project` (0.60) / `listed` (0.35) — and the matcher weights matches accordingly. Rescoring the plan's own role list:
-
-```
-role                                        plan  real     Δ  bucket    depth
------------------------------------------------------------------------------
-Junior Full Stack Developer                   84    68   -16  APPLY      0.74
-React Native Developer (freelance)            68    60    -8  REVIEW     0.83
-AI/ML Senior Software Engineer                75    53   -22  REVIEW     0.60
-Full Stack Developer (AI-first)               87    49   -38  REVIEW     0.57
-Manual QA Engineer                            25    48   +23  REVIEW     1.00
-Senior React Native Developer                 35    47   +12  REVIEW     0.82
-Frontend Developer (React + Next.js)          93    42   -51  REVIEW     0.29
-Full Stack Developer (Redesigned)             91    40   -51  SKIP       0.33
-Svelte Frontend Developer                     35    38    +3  SKIP       1.00
-Freelance Full Stack (telecom)                89    36   -53  SKIP       0.00
-Full Stack Engineer (Zaimah)                  90    34   -56  SKIP       0.00
-Angular Frontend Developer                    30    17   -13  SKIP       0.00
-```
-
-`depth` = share of the match backed by real narrative evidence rather than the competencies list.
-
-The four roles the plan called "Very High priority" (93, 91, 90, 89) have depths of **0.29, 0.33, 0.00, 0.00**. Zaimah and the telecom freelance role match your CV on *literally zero* evidenced skills — every requirement hits a bare list entry. The plan ranked them top-four.
-
----
-
-## 3. But the matcher isn't the fix — your CV is the bottleneck
-
-Before you conclude you're unqualified: I re-ran everything against a simulated CV where the **only** change is naming the stack you already claim inside the bullets you already have. No new claims, no new jobs, no invented experience — just "Built a responsive public-facing site" → "Built a responsive public-facing site in React and Next.js."
-
-```
-role                                   plan   now  fixed   bucket now -> fixed
--------------------------------------------------------------------------------
-Junior Full Stack Developer              84    68    100   APPLY      -> APPLY
-Full Stack Developer (Redesigned)        91    40     88   SKIP       -> APPLY
-Frontend Developer (React + Next.js)     93    42     87   REVIEW     -> APPLY
-Freelance Full Stack (telecom)           89    36     79   SKIP       -> APPLY
-React Native Developer (freelance)       68    60     78   REVIEW     -> APPLY
-Full Stack Engineer (Zaimah)             90    34     70   SKIP       -> APPLY
-Full Stack Developer (AI-first)          87    49     68   REVIEW     -> APPLY
-AI/ML Senior Software Engineer           75    53     58   REVIEW     -> REVIEW
-```
-
-**One afternoon of CV editing moves seven roles into APPLY.** That is a larger improvement to your actual outcomes than every component in the 45-section plan combined, and it costs nothing. Do this before you write a line of the system.
-
-Concretely, rewrite along these lines — the facts are unchanged, only the stack is made explicit:
-
-- `EFDP_02` → "Developed a responsive public-facing site and multi-role admin dashboard **in React and Next.js** with role-based access control..."
-- `BETA_01` → "Led end-to-end delivery of a Property Management System **built on [stack]**, giving landlords..."
-- `BETA_03` → "Built and supported the e-commerce platforms Global Trade House and Efoyita **using [stack]**..."
+Example rewrites:
+- `EFDP_02` → "Developed a responsive public-facing site and multi-role admin dashboard **in React and Next.js** with RBAC..."
+- `BETA_01` → "Led end-to-end delivery of a Property Management System **built on [stack]**..."
 - `NODELALA_01` → "...full-stack property platform across web **(Next.js)** and mobile **(React Native)**..."
 
-Fill the brackets with what you actually used. If a technology in your competencies list never fills a bracket anywhere, consider cutting it — an unevidenced claim is a liability in a technical screen, not an asset.
+### NO_METRICS (moderate)
+
+Zero quantification in the entire CV — no team size, user counts, latency numbers, or revenue figures. The CTO and Team Leader roles make this especially visible: "Managed and mentored the developer team" vs "Managed a team of N engineers" is free signal left on the table.
+
+### ML_THIN (moderate)
+
+The entire Data & AI competencies line rests on one Streamlit regression project (`ML_01`). TensorFlow and OpenCV have no narrative evidence. AI/ML roles should not be targeted on this CV as written.
 
 ---
 
-## 4. Drop AI/ML from your target roles
+## Best-fit role targets
 
-`target_roles` in §44 includes **AI Engineer** and **ML Engineer**. The entire evidential basis is `ML_01`: one Streamlit regression app on Ethiopian car sales. **TensorFlow and OpenCV have zero supporting evidence anywhere in the CV** — they appear only in the competencies list.
+Strong fit (APPLY range likely):
+- Full-stack engineering roles (React + Node.js + Python stacks)
+- Tech Lead / Engineering Manager (CTO credential is strong; team leadership evidenced at two roles)
+- Property / real-estate tech platforms
+- Frontend roles (React / Next.js)
+- Backend roles (Node.js / Django / Python / FastAPI)
 
-The plan scored CodingCops AI/ML at 70–80 and called it "High priority." Real score: 53, and that's generous. Applying to AI/ML roles on this CV wastes the scarcest resource in a job search — your application throughput and your credibility with recruiters who may also hold full-stack roles.
+Medium fit (REVIEW range; evidence depth improves if stack is named in bullets):
+- EdTech / school information systems
+- Government / public sector digital platforms
+- E-commerce platforms
+- Mobile development (React Native / Flutter listed; iOS/Android deployment inferred from CTO role)
 
-Your genuine differentiators, which the plan's fact bank **omitted entirely**, are:
-
-- **EFDP / Ethiopian Ministry of Transport** — large-scale government platform, RBAC, multi-role admin. In the Addis market this is a serious credential and it wasn't in the plan's `profile.yaml` at all.
-- **Moogter.com backend** — database modelling and client-server API design for a social platform.
-- **Sek'ela SIMS** — education-sector system, plus the only testing/code-review evidence you have.
-
-The plan's YAML listed only Beta Tech Hub, NoDelala and the ML project — it dropped **three of your four employers** and your strongest project. Fixed in `profile.yaml`.
-
-Also correcting two specifics: the Bankon24 score of 87 was credited to "banking-related experience," which rests entirely on `ONETAP_03` — *"Supported Tsedey Bank's USSD initiative and mobile app design."* That's design-adjacent support work, not fintech engineering. And Svelte at 35 was too generous: Svelte, Jenkins and Kubernetes are all hard negatives, now in `absent:` so the matcher rejects confidently instead of hedging.
-
----
-
-## 5. Two 30-second fixes worth more than a sprint of code
-
-1. **No GitHub URL on your CV.** The channel repeatedly asks for "CV + GitHub + portfolio." You have `tensae.vercel.app` and nothing else. Every application missing it is silently weakened. `profile.yaml` emits `PROFILE_GAP` on every job until you add it.
-2. **No metrics anywhere.** Not one number in the whole document — no team size (you were a *Team Leader*), no user counts, no data volumes. "Coordinated sprint planning" vs "Led a team of 5 across 2-week sprints" is free signal you're leaving on the table.
+Avoid:
+- AI / ML engineer roles — thin evidence; one project does not support a senior hire
+- Roles requiring Kubernetes, Terraform, Jenkins, Go, Rust, PHP, .NET, Ruby, Swift, Kotlin — all hard negatives
 
 ---
 
-## What I'd do next, in order
+## Highest-ROI next actions (in order)
 
-1. Resolve the Beta Tech Hub dates. Decide what the gap narrative is. *(today, by hand)*
-2. Add GitHub. Name the stack in every bullet. Add 3–5 numbers. *(one afternoon)*
-3. Re-run `rescore.py` against the updated `profile.yaml` to confirm the lift is real.
-4. Cut four static CV variants from the rewritten master.
-5. *Then* build the watcher → dedup → extract → alert pipeline from the review.
-
-Steps 1–2 will do more for your response rate than steps 4–5. The system is worth building, but it's an amplifier — and right now it would be amplifying a CV that scores 0.00 evidence-depth against the jobs it's aimed at.
-
-Say the word and I'll build the pipeline, or do a full line-by-line rewrite of the CV first.
+1. **Resolve Beta Tech Hub dates.** Decide what the accurate record is, update the CV, and remove the `BLOCK_SENDING` flag. *(today, by hand)*
+2. **Name the stack in experience bullets.** One afternoon of edits moves the majority of target roles from REVIEW/SKIP into APPLY.
+3. **Add metrics.** At minimum: team size at Beta Tech Hub and Nodelala PLC, rough scale of platforms (users, records, transactions).
+4. Re-run `rescore.py` against the updated `profile.yaml` to confirm the lift is real.
+5. Cut updated static CV variants from the rewritten master.

@@ -66,6 +66,12 @@ ALIASES = {
     "agile": "Agile / sprint planning", "scrum": "Agile / sprint planning",
     "k8s": "Kubernetes", "vue.js": "Vue", "vuejs": "Vue",
     "dot net": ".NET", "dotnet": ".NET", "c#": ".NET",
+    "angular.js": "Angular", "angularjs": "Angular",
+    "flutter": "Flutter",
+    "dart": "Dart",
+    "spring": "Spring Boot", "spring boot": "Spring Boot", "springboot": "Spring Boot",
+    "fastapi": "FastAPI", "fast api": "FastAPI",
+    "prisma": "Prisma",
 }
 
 # Stack shorthands that expand to several skills.
