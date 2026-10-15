@@ -13,9 +13,11 @@ from .models import ParsedJob
 _matcher: Matcher | None = None
 
 # Shift / overnight patterns that may conflict with Africa/Addis_Ababa (UTC+3).
+# Only flag genuine overnight/night-shift patterns — not a normal 10:00-17:00 day.
+# Matches: start >= 18:00, or end <= 08:00 (next morning).
 _NIGHT_SHIFT = re.compile(
     r"\b(night\s*shift|graveyard|overnight|us\s*hours?|"
-    r"(?:1[0-9]|2[0-3])\s*(?::|h)\s*\d{2}\s*(?:\u2013|-|to)\s*\d{1,2}"
+    r"(?:1[8-9]|2[0-3])\s*(?::|h)\s*\d{2}\s*(?:\u2013|-|to)\s*(?:0?[1-8]|1[0-2])\b"
     r"|[6-9]\s*(?:pm|PM)\s*(?:\u2013|-|to)\s*[0-9]\s*(?:am|AM))\b",
     re.I,
 )
@@ -61,16 +63,28 @@ def preference_flags(parsed: ParsedJob, prefs: dict, raw_text: str) -> list[str]
     # c. Minimum salary check.
     minimum_salary = prefs.get("minimum_salary")
     if minimum_salary is not None and parsed.salary_raw is not None:
-        m = re.search(r"[\d,]+", parsed.salary_raw)
+        m = re.search(r"([\d,]+)\s*k\b", parsed.salary_raw, re.I)
         if m:
+            # "5k" -> 5000, "50k" -> 50000, etc.
             try:
-                offered = float(m.group(0).replace(",", ""))
+                offered = float(m.group(1).replace(",", "")) * 1000.0
                 if offered < float(minimum_salary):
                     flags.append(
                         f"PREF_SALARY_LOW: {parsed.salary_raw!r} below minimum {minimum_salary}"
                     )
             except (ValueError, TypeError):
                 pass
+        else:
+            m = re.search(r"[\d,]+", parsed.salary_raw)
+            if m:
+                try:
+                    offered = float(m.group(0).replace(",", ""))
+                    if offered < float(minimum_salary):
+                        flags.append(
+                            f"PREF_SALARY_LOW: {parsed.salary_raw!r} below minimum {minimum_salary}"
+                        )
+                except (ValueError, TypeError):
+                    pass
 
     # d. Employment type mismatch.
     if parsed.employment_type is not None:
@@ -136,10 +150,23 @@ def score(parsed: ParsedJob, job_id: str = "?", raw_text: str = "") -> tuple[Mat
 
     # --- preference scoring -------------------------------------------------
     # Each violation damps the score by 0.85; these are warnings, not blockers.
+    # After damping, recompute the bucket so a damped APPLY can drop to REVIEW.
     prefs = yaml.safe_load(open(str(PROFILE))).get("preferences", {})
     pref_flag_list = preference_flags(parsed, prefs, raw_text)
     m.flags.extend(pref_flag_list)
     for _ in pref_flag_list:
         m.score = round(m.score * 0.85)
+    # Recompute bucket from the damped score (same thresholds as matcher.py).
+    # Preserve APPLY (HOLD) when blocking conflicts exist.
+    if m.blockers:
+        m.bucket = "SKIP"
+    elif m.score >= 65:
+        m.bucket = "APPLY (HOLD)" if any(
+            f.startswith("BLOCKED:") for f in m.flags
+        ) else "APPLY"
+    elif m.score >= 40:
+        m.bucket = "REVIEW"
+    else:
+        m.bucket = "SKIP"
 
     return m, cv_variant(m)

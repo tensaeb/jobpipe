@@ -73,6 +73,30 @@ def _deliver(msg: EmailMessage) -> str:
     return "250 accepted"
 
 
+def _read_eml_body(eml_path: str | None, fallback_body: str) -> str:
+    """Read the body from the .eml file on disk if it exists.
+
+    The user may have edited the .eml (e.g. filled in [YOUR ANSWER: ...]
+    placeholders). The DB copy never changes after approve(), so we prefer
+    the on-disk file when sending. Falls back to the stored body.
+    """
+    if not eml_path:
+        return fallback_body
+    try:
+        from email import policy as email_policy
+        from email.parser import BytesParser
+        p = Path(eml_path)
+        if not p.exists():
+            return fallback_body
+        msg = BytesParser(policy=email_policy.default).parse(p.open("rb"))
+        body = msg.get_content()
+        if body and body.strip():
+            return body
+    except Exception:  # noqa: BLE001
+        pass
+    return fallback_body
+
+
 def send_one(con, job_id: int, *, manual: bool = False, force_dry: bool | None = None) -> dict:
     """Send one approved application. Returns a result dict; never raises on
     a policy block (that's a normal outcome), only on transport failure."""
@@ -83,8 +107,14 @@ def send_one(con, job_id: int, *, manual: bool = False, force_dry: bool | None =
     job, app = ctx["job"], ctx["app"]
     dry = DRY_RUN if force_dry is None else force_dry
 
+    # Prefer the body from the .eml file on disk — the user may have edited
+    # it (e.g. filled [YOUR ANSWER: ...] placeholders). The DB copy never
+    # changes after approve(), so reading the file is the only way to pick up
+    # manual edits.
+    body = _read_eml_body(app["eml_path"], app["email_body"] or "")
+
     msg = build_message(
-        job["application_email"], app["email_subject"], app["email_body"], app["cv_variant"]
+        job["application_email"], app["email_subject"], body, app["cv_variant"]
     )
     has_cv = any(part.get_filename() for part in msg.iter_attachments())
 
@@ -136,7 +166,11 @@ def send_one(con, job_id: int, *, manual: bool = False, force_dry: bool | None =
 
 
 def send_batch(con, *, manual: bool = False, limit: int = 50) -> list[dict]:
-    """Send every approved-and-eligible application, newest-highest-score first."""
+    """Send every approved-and-eligible application, newest-highest-score first.
+
+    One SMTP failure does not abort the rest — each job is tried independently
+    and failures are recorded in the result list.
+    """
     rows = con.execute(
         "SELECT a.job_id FROM applications a JOIN jobs j ON j.id = a.job_id"
         " WHERE a.sent_at IS NULL AND j.status='MATERIALS_READY'"
@@ -145,7 +179,12 @@ def send_batch(con, *, manual: bool = False, limit: int = 50) -> list[dict]:
     ).fetchall()
     out = []
     for r in rows:
-        out.append(send_one(con, r["job_id"], manual=manual))
+        try:
+            out.append(send_one(con, r["job_id"], manual=manual))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("send_batch: job %s failed", r["job_id"])
+            out.append({"job_id": r["job_id"], "sent": False,
+                        "blocked": [f"transport error: {exc}"]})
     return out
 
 

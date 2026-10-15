@@ -174,16 +174,39 @@ def record_decision(con, job_id: int, action: str, reason: str | None = None,
         "extracted_by": r["extracted_by"],
     }
     con.execute(
-        "INSERT INTO decisions(job_id,action,reason,score,bucket,features,decided_at,actor)"
-        " VALUES(?,?,?,?,?,?,?,?)",
-        (job_id, action, reason, r["score"], r["bucket"], jl(features), now(), actor),
+        "INSERT INTO decisions(job_id,action,reason,score,bucket,features,decided_at,actor,source)"
+        " VALUES(?,?,?,?,?,?,?,?,?)",
+        (job_id, action, reason, r["score"], r["bucket"], jl(features), now(), actor,
+         r["extracted_by"]),
     )
     con.commit()
 
 
 def approve(con, job_id: int, actor: str = "user") -> dict:
-    """Generate materials. Never sends. Returns a summary dict."""
+    """Generate materials. Never sends. Returns a summary dict.
+
+    Refuses to re-approve a job that is already SENT, REJECTED, or DUPLICATE,
+    and refuses when any application for this job already has sent_at set
+    (idempotency: the same job can never generate two applications).
+    """
     row, match = _rebuild_match(con, job_id)
+
+    # Idempotency: any application for this job with sent_at set means it was
+    # already sent — never generate a second set of materials.
+    existing_app = con.execute(
+        "SELECT id FROM applications WHERE job_id=? AND sent_at IS NOT NULL LIMIT 1",
+        (job_id,),
+    ).fetchone()
+    if existing_app is not None:
+        raise ValueError(
+            f"job {job_id} already has a sent application (id={existing_app['id']}). "
+            "Refusing to generate duplicate materials."
+        )
+
+    if row["status"] in ("SENT", "REJECTED", "DUPLICATE"):
+        raise ValueError(
+            f"job {job_id} is {row['status']} — refusing to re-approve."
+        )
     if row["status"] == "QUARANTINED":
         raise ValueError(
             f"job {job_id} is quarantined (adversarial post content). "

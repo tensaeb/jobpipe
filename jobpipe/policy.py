@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from pathlib import Path
 
 from .config import (
     ALLOW_PERSONAL_EMAIL,
@@ -70,11 +71,18 @@ def check(con, job_id: int, *, manual: bool = False) -> tuple[list[str], dict]:
     if job["status"] == "DUPLICATE":
         reasons.append(f"duplicate of job {job['duplicate_of']}")
 
+    # Human-only approvals: agent-signed APPROVE decisions (e.g. from triage
+    # --act or the agent) do not satisfy the send gate. Only a user or the
+    # Telegram bot (acting on the user's behalf) can authorize a send.
     approved = con.execute(
-        "SELECT 1 FROM decisions WHERE job_id=? AND action='APPROVE' LIMIT 1", (job_id,)
+        "SELECT 1 FROM decisions WHERE job_id=? AND action='APPROVE'"
+        " AND actor IN ('user','bot') LIMIT 1", (job_id,)
     ).fetchone()
     if not approved:
-        reasons.append("no APPROVE decision recorded for this job")
+        reasons.append(
+            "no human APPROVE decision recorded for this job "
+            "(agent approvals do not count)"
+        )
 
     # --- unresolved data conflicts (CV honesty) -----------------------------
     for f in ul(job["flags_json"]):
@@ -123,11 +131,32 @@ def check(con, job_id: int, *, manual: bool = False) -> tuple[list[str], dict]:
     # write_body() appends [YOUR ANSWER: ...] markers when a post requests
     # salary, notice period, GitHub, etc. Transmitting these to recruiters
     # would be embarrassing — block until the user fills them in the .eml.
-    if app is not None and app["email_body"] and "[YOUR ANSWER:" in (app["email_body"] or ""):
-        reasons.append(
-            "email body contains unfilled [YOUR ANSWER: ...] placeholders — "
-            "edit the .eml before sending"
-        )
+    # Check both the stored DB body and the .eml file on disk (the user may
+    # have edited the .eml to fill in the placeholders).
+    placeholder_blocked = False
+    if app is not None:
+        db_body = app["email_body"] or ""
+        if "[YOUR ANSWER:" in db_body:
+            # The user may have filled in the .eml on disk; check there too.
+            eml_path = app["eml_path"]
+            eml_body = ""
+            if eml_path:
+                try:
+                    from email import policy as _email_policy
+                    from email.parser import BytesParser
+                    p = Path(eml_path)
+                    if p.exists():
+                        _msg = BytesParser(policy=_email_policy.default).parse(p.open("rb"))
+                        eml_body = _msg.get_content() or ""
+                except Exception:  # noqa: BLE001
+                    eml_body = ""
+            if "[YOUR ANSWER:" in eml_body:
+                placeholder_blocked = True
+        if placeholder_blocked:
+            reasons.append(
+                "email body contains unfilled [YOUR ANSWER: ...] placeholders — "
+                "edit the .eml before sending"
+            )
 
     # --- don't spam the same employer ---------------------------------------
     if job["company"]:

@@ -20,6 +20,9 @@ from .config import LLM_API_KEY, LLM_BASE_URL, LLM_ENABLED, LLM_MODEL, LLM_PROVI
 log = logging.getLogger(__name__)
 _client = None
 _probe_result: bool | None = None
+_probe_time: float | None = None
+_PROBE_TTL_SECONDS = 300  # re-probe every 5 minutes so a cold-start blip
+                           # doesn't disable the LLM for the life of the process.
 
 
 @dataclass
@@ -58,32 +61,47 @@ def _create(messages, *, tools=None, temperature=0, max_tokens=None, json_mode=F
 
 def _robust_create(messages, **kw):
     """Providers differ on optional params (response_format, max_tokens).
-    Retry once without them rather than lose the call."""
+    Retry once without them rather than lose the call.
+
+    Tracks which optional arguments were actually emitted to the provider so
+    the retry drops exactly those (e.g. json_mode maps to response_format).
+    """
+    emitted = set(kw.keys())
     try:
         return _create(messages, **kw)
     except Exception as e:  # noqa: BLE001
-        had_optional = bool(kw.pop("response_format", None))
-        had_optional = bool(kw.pop("max_tokens", None)) or had_optional
-        if not had_optional:
+        # Determine which optional params were actually sent.
+        sent_optional = emitted & {"response_format", "max_tokens", "json_mode"}
+        if not sent_optional:
             raise
-        log.debug("strict call failed (%s); retrying without optional params", e)
-        return _create(messages, **kw)
+        # Build a clean kwargs without the optional params that may be
+        # rejected by this provider.
+        retry_kw = {k: v for k, v in kw.items() if k not in sent_optional}
+        log.debug(
+            "strict call failed (%s); retrying without optional params %s",
+            e, sorted(sent_optional),
+        )
+        return _create(messages, **retry_kw)
 
 
 def available() -> bool:
-    """True if an LLM is reachable. Cached; 'auto' probes once per process."""
-    global _probe_result
+    """True if an LLM is reachable. Cached with a 5-minute TTL so a cold-start
+    blip doesn't disable the LLM for the life of a 24/7 watcher."""
+    global _probe_result, _probe_time
     if LLM_ENABLED == "off":
         return False
-    if _probe_result is not None:
+    now_ts = time.time()
+    if _probe_result is not None and _probe_time is not None \
+            and now_ts - _probe_time < _PROBE_TTL_SECONDS:
         return _probe_result
     try:
         model_list = _get_client().models.list()
-        # Only warn when the provider returned a non-empty list and the
-        # configured model isn't in it.
+        # Gemini's OpenAI-compatible /models returns ids with a "models/"
+        # prefix (e.g. "models/gemini-2.0-flash"). Strip it for comparison.
         ids = [m.id for m in (model_list.data if hasattr(model_list, "data")
                                else list(model_list))]
-        if ids and LLM_MODEL not in ids:
+        normalized = {i.split("/", 1)[-1] for i in ids}
+        if ids and LLM_MODEL not in normalized:
             log.warning(
                 "LLM model %r not found in provider's model list "
                 "(available: %s ...). Falling back to regex-only.",
@@ -91,17 +109,21 @@ def available() -> bool:
                 ", ".join(ids[:5]),
             )
             _probe_result = False
+            _probe_time = now_ts
             return False
         _probe_result = True
+        _probe_time = now_ts
     except Exception as first:  # noqa: BLE001  # some gateways omit /models
         log.debug("models.list probe failed (%s); trying a 1-token chat", first)
         try:
             _create([{"role": "user", "content": "ping"}], max_tokens=1, temperature=0)
             _probe_result = True
+            _probe_time = now_ts
         except Exception as e:  # noqa: BLE001
             if LLM_ENABLED == "on":
                 log.warning("LLM_ENABLED=on but provider unreachable: %s", e)
             _probe_result = False
+            _probe_time = now_ts
     return _probe_result
 
 

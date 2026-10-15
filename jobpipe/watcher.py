@@ -25,6 +25,20 @@ _last_post_time: float | None = None
 _daily_count: int = 0
 
 
+def _in_thread(fn, *args, **kw):
+    """Open a short-lived DB connection on the worker thread, call ``fn`` with
+    it as the first argument, and close the connection when done.
+
+    This satisfies SQLite's thread-affinity rule: a connection opened in the
+    event-loop thread can never be used inside ``asyncio.to_thread``.
+    """
+    con = connect()
+    try:
+        return fn(con, *args, **kw)
+    finally:
+        con.close()
+
+
 def _get_existing_job(con, src: str, msg_id: str):
     """Fetch an existing job for a source+msg_id pair. Pure function for
     asyncio.to_thread safety."""
@@ -45,7 +59,6 @@ async def run(backfill: int = 0):
         raise SystemExit("Set TELEGRAM_API_ID and TELEGRAM_API_HASH (my.telegram.org)")
 
     client = TelegramClient("telegram", int(TG_API_ID), TG_API_HASH)
-    con = connect()
 
     async def handle(text, chat, msg_id, posted_at):
         global _last_post_time, _daily_count
@@ -53,8 +66,7 @@ async def run(backfill: int = 0):
             src = getattr(chat, "username", None) or str(getattr(chat, "id", "unknown"))
             url = f"https://t.me/{src}/{msg_id}" if getattr(chat, "username", None) else None
             pid, status = await asyncio.to_thread(
-                ingest_post,
-                con,
+                _in_thread, ingest_post,
                 source=f"telegram:{src}",
                 body=text,
                 source_msg_id=msg_id,
@@ -66,7 +78,7 @@ async def run(backfill: int = 0):
             if status.startswith("duplicate"):
                 log.info("post %s skipped (%s)", pid, status)
                 return
-            jid = await asyncio.to_thread(process_post, con, pid)
+            jid = await asyncio.to_thread(_in_thread, process_post, pid)
             log.info("post %s -> job %s", pid, jid)
             _last_post_time = _time.time()
             _daily_count += 1
@@ -93,7 +105,7 @@ async def run(backfill: int = 0):
             src = getattr(chat, "username", None) or str(getattr(chat, "id", "unknown"))
 
             row = await asyncio.to_thread(
-                _get_existing_job, con, f"telegram:{src}", str(msg_id)
+                _in_thread, _get_existing_job, f"telegram:{src}", str(msg_id)
             )
             if row is None:
                 # Not seen before — treat as a new message.
@@ -106,25 +118,42 @@ async def run(backfill: int = 0):
             from .score import score as _score, cv_variant as _cv_variant
             parsed, _ = await asyncio.to_thread(_extract, text)
             match, cv = await asyncio.to_thread(_score, parsed, str(row["id"]), text)
+
+            # Full edit reconciliation: persist the new score/bucket/flags/cv
+            # AND refresh the stored body, skills, recipient, and other parsed
+            # fields so that a subsequent approve() builds materials from the
+            # edited post, not the stale original.
             if abs(match.score - old_score) >= 5:
-                # Persist the new score/bucket/flags/cv before alerting so that
-                # a subsequent approve() call builds materials from current data.
                 await asyncio.to_thread(
-                    update_job_score, con, row["id"], match, cv
+                    _in_thread, update_job_score, row["id"], match, cv
                 )
+                # Re-run the full post processing so body/skills/recipient
+                # reflect the edit, then re-alert with the latest data.
+                await asyncio.to_thread(_in_thread, process_post, row["id"])
                 from . import notify
-                await asyncio.to_thread(
-                    notify.send_with_buttons,
-                    row["id"],
-                    (
-                        f"\u270f\ufe0f <b>Edited post</b> \u2014 score changed "
-                        f"{old_score} \u2192 {match.score}\n"
-                        + notify.format_alert(
-                            row["id"], match, parsed, cv, None,
-                            include_commands=False,
-                        )
-                    ),
+                # Re-fetch the updated row for the alert.
+                updated_row = await asyncio.to_thread(
+                    _in_thread, _get_existing_job, f"telegram:{src}", str(msg_id)
                 )
+                if updated_row:
+                    jid = updated_row["id"]
+                    r = await asyncio.to_thread(
+                        _in_thread, lambda c: c.execute(
+                            "SELECT * FROM jobs WHERE id=?", (jid,)
+                        ).fetchone()
+                    )
+                    await asyncio.to_thread(
+                        notify.send_with_buttons,
+                        jid,
+                        (
+                            f"\u270f\ufe0f <b>Edited post</b> \u2014 score changed "
+                            f"{old_score} \u2192 {r['score']}\n"
+                            + notify.format_alert(
+                                jid, match, parsed, cv, None,
+                                include_commands=False,
+                            )
+                        ),
+                    )
         except Exception:  # noqa: BLE001
             log.exception("edited-message handler failed")
 
@@ -148,7 +177,7 @@ async def run(backfill: int = 0):
     # Start bot listener if a bot token is configured.
     if TG_BOT_TOKEN:
         from . import notify
-        asyncio.create_task(notify.start_bot_listener(con))
+        asyncio.create_task(notify.start_bot_listener())
 
     # Start heartbeat.
     asyncio.create_task(heartbeat())

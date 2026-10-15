@@ -1,7 +1,8 @@
 """jobpipe — personal job-application pipeline.
 
 Telegram discovery → dedup → extract → score → alert → you approve → .eml → you send.
-Human-in-the-loop by default: nothing is ever sent automatically.
+Human-in-the-loop by default: nothing is sent without an explicit APPROVE decision.
+Use `jobpipe send ID` or `jobpipe autosend` to deliver approved applications.
 """
 
 __all__ = [

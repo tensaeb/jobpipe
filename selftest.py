@@ -12,7 +12,7 @@ os.environ["OUTBOX"] = tempfile.mkdtemp()
 os.environ["CV_DIR"] = tempfile.mkdtemp()  # deliberately empty
 os.environ["LLM_ENABLED"] = "off"          # prove regex-only works
 
-from jobpipe.db import connect
+from jobpipe.db import connect, jl, now, ul
 from jobpipe.pipeline import approve, ingest_post, process_pending, reject
 from jobpipe.dedup import body_hash, normalize_body
 from jobpipe.extract import regex_extract, injection_signals
@@ -59,8 +59,11 @@ print("\n[scoring]")
 rows = {r["id"]: r for r in con.execute("SELECT * FROM jobs").fetchall()}
 angular = [r for r in rows.values() if r["title"] == "Frontend Developer" and r["company"] is None]
 check("Angular role rejected via hard negative", angular and angular[0]["bucket"] == "SKIP")
-check("no job is auto-APPLY while BETA_DATES unresolved",
-      all("APPLY (HOLD)" == r["bucket"] or r["bucket"] != "APPLY" for r in rows.values()))
+check("conflict resolved — APPLY bucket now possible (no BLOCKED conflicts)",
+      not any("BLOCKED:" in f for r in rows.values() for f in ul(r["flags_json"])))
+check("conflict resolved — CTO part-time + Beta full-time can coexist",
+      not any("BLOCKED: BETA_DATES" in f for r in rows.values()
+              for f in ul(r["flags_json"])))
 check("evidence depth recorded", all(r["evidence_depth"] is not None for r in rows.values()))
 
 print("\n[adversarial]")
@@ -80,7 +83,8 @@ res = approve(con, target["id"])
 check("eml written", os.path.exists(res["eml"]))
 check("recipient set from post", res["to"] is not None)
 check("CV variant chosen deterministically", res["cv"].endswith(".docx"))
-check("blocking conflict surfaced on approve", any("BETA_DATES" in b for b in res["blocked"]))
+check("no blocking conflict on approve",
+      not any(b.startswith("BLOCKED:") for b in res["blocked"]))
 check("no fabricated metrics in body",
       not any(w in res["body"] for w in ("%", "users", "increased", "reduced")))
 other = [r for r in rows.values() if r["status"] == "NEW"][1]
@@ -109,8 +113,15 @@ print("\n[send policy]")
 from jobpipe import policy
 sent_job = [r for r in rows.values() if r["status"] == "NEW"][0]["id"]
 reasons, _ = policy.check(con, sent_job, manual=True)
-check("blocks without SMTP config", any("SMTP" in r for r in reasons))
-check("blocks on unresolved CV conflict", any("BETA_DATES" in r for r in reasons))
+check("no longer blocks on resolved CV conflict",
+      not any("BETA_DATES" in r for r in reasons))
+# SMTP block test — if real SMTP creds are present, no SMTP block expected.
+from jobpipe import config as _cfg
+if _cfg.SMTP_USER and _cfg.SMTP_PASS:
+    check("SMTP configured — no SMTP block (expected with real creds)",
+          not any("SMTP_USER/SMTP_PASS" in r for r in reasons))
+else:
+    check("blocks without SMTP config (no creds)", any("SMTP" in r for r in reasons))
 qid = inj[0]["id"]
 r2, _ = policy.check(con, qid, manual=True)
 check("quarantined job blocked even in manual mode",

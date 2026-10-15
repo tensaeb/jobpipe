@@ -97,8 +97,16 @@ def now() -> str:
 
 
 def connect() -> sqlite3.Connection:
-    con = sqlite3.connect(DB_PATH)
+    """Open a short-lived SQLite connection on the calling thread.
+
+    SQLite objects created in one thread cannot be used in another
+    (ProgrammingError). Every caller that hands a connection to
+    ``asyncio.to_thread`` or a worker thread must open its own connection
+    here and close it when done.
+    """
+    con = sqlite3.connect(DB_PATH, timeout=30.0)
     con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout=5000")
     con.executescript(SCHEMA)
     # Safe migration: add actor column if the DB predates this change.
     try:
@@ -109,6 +117,12 @@ def connect() -> sqlite3.Connection:
     # Safe migration: add subject_instruction column to jobs if the DB predates this change.
     try:
         con.execute("ALTER TABLE jobs ADD COLUMN subject_instruction TEXT")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    # Safe migration: add provenance columns to decisions if the DB predates this change.
+    try:
+        con.execute("ALTER TABLE decisions ADD COLUMN source TEXT DEFAULT 'regex'")
         con.commit()
     except sqlite3.OperationalError:
         pass  # column already exists

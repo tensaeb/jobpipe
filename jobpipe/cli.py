@@ -216,6 +216,13 @@ def cmd_stats(args, con):
     print(f"applications       {one('SELECT COUNT(*) FROM applications')}")
     print(f"  sent             {one('SELECT COUNT(*) FROM applications WHERE sent_at IS NOT NULL')}")
     print(f"decisions logged   {one('SELECT COUNT(*) FROM decisions')}")
+    # Extraction method breakdown (regex vs regex+llm).
+    total_jobs = one("SELECT COUNT(*) FROM jobs")
+    if total_jobs:
+        llm_jobs = one("SELECT COUNT(*) FROM jobs WHERE extracted_by='regex+llm'")
+        regex_jobs = total_jobs - llm_jobs
+        print(f"extraction: regex={regex_jobs}  regex+llm={llm_jobs}"
+              f"  ({llm_jobs/total_jobs*100:.0f}% LLM-assisted)")
     rows = con.execute(
         "SELECT follow_up_due, job_id FROM applications WHERE sent_at IS NOT NULL"
         " AND response_status IS NULL AND follow_up_due <= date('now')"
@@ -420,6 +427,14 @@ def main(argv=None):
     s.set_defaults(fn=cmd_llmtest)
 
     args = ap.parse_args(argv)
+
+    # Startup validation: warn about missing identity before any send path.
+    from .config import SENDER_EMAIL, SENDER_NAME
+    if not SENDER_EMAIL and args.fn in (cmd_send, cmd_autosend, cmd_approve):
+        print("warning: SENDER_EMAIL is not set — generated .eml files will have "
+              "an empty From address. Set SENDER_NAME and SENDER_EMAIL in .env.",
+              file=sys.stderr)
+
     con = connect()
     try:
         args.fn(args, con)

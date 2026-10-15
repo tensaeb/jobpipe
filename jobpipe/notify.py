@@ -7,6 +7,7 @@ import json
 import logging
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 from .config import TG_ALERT_CHAT_ID, TG_BOT_TOKEN
 from .matcher import Match
@@ -72,6 +73,41 @@ def format_alert(
 
 def _esc(s) -> str:
     return html_escape(s)
+
+
+OFFSET_FILE = Path(__file__).resolve().parent.parent / "data" / "bot_offset.json"
+
+
+def _load_offset() -> int:
+    try:
+        return int(json.loads(OFFSET_FILE.read_text()).get("offset", 0))
+    except Exception:
+        return 0
+
+
+def _save_offset(offset: int) -> None:
+    try:
+        OFFSET_FILE.parent.mkdir(parents=True, exist_ok=True)
+        OFFSET_FILE.write_text(json.dumps({"offset": offset}))
+    except Exception:  # noqa: BLE001
+        log.debug("could not persist bot offset: %s", offset)
+
+
+def _authorized(update: dict) -> bool:
+    """Return True only when the update comes from TG_ALERT_CHAT_ID.
+
+    Anyone who finds the bot can otherwise /approve N and generate materials.
+    """
+    try:
+        if "callback_query" in update:
+            chat = update["callback_query"]["message"]["chat"]
+        elif "message" in update:
+            chat = update["message"]["chat"]
+        else:
+            return False
+        return str(chat.get("id")) == str(TG_ALERT_CHAT_ID)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def send(text: str) -> bool:
@@ -265,18 +301,26 @@ def send_bot_command_updates() -> None:
 
     con = _connect()
 
-    offset = 0
+    offset = _load_offset()
     while True:
         # Outer guard: any unexpected exception (network, JSON parse, etc.)
         # logs and continues instead of killing the thread permanently.
         try:
-            resp = _bot_api("getUpdates", {"offset": offset, "timeout": 30, "limit": 10})
+            # getUpdates asks Telegram to hold up to 25s; urlopen timeout is
+            # 20s so idle polls fail cleanly instead of hanging forever.
+            resp = _bot_api("getUpdates", {"offset": offset, "timeout": 25, "limit": 10})
             if resp is None or not resp.get("ok"):
                 time.sleep(5)
                 continue
 
             for update in resp.get("result", []):
                 offset = update["update_id"] + 1
+                _save_offset(offset)
+
+                # --- authorization gate -------------------------------------
+                if not _authorized(update):
+                    log.debug("ignoring update from unauthorized chat")
+                    continue
 
                 # --- inline keyboard callbacks -------------------------------
                 if "callback_query" in update:
@@ -302,7 +346,7 @@ def send_bot_command_updates() -> None:
                                 _send_document(TG_ALERT_CHAT_ID, res["eml"], caption)
                             else:
                                 send(caption)
-                        except ValueError as e:
+                        except (ValueError, KeyError, TypeError) as e:
                             _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
                                                              "text": str(e)[:200]})
                             send(f"\u26a0 Approve {job_id} failed: {_esc(str(e))}")
@@ -313,13 +357,16 @@ def send_bot_command_updates() -> None:
                             _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
                                                              "text": f"Rejected job {job_id}"})
                             send(f"\u274c Rejected job {job_id}")
-                        except ValueError as e:
+                        except (ValueError, KeyError, TypeError) as e:
                             _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
                                                              "text": str(e)[:200]})
 
                     elif kind == "info":
                         _bot_api("answerCallbackQuery", {"callback_query_id": cq_id, "text": ""})
-                        info_text = _format_info(con, job_id)
+                        try:
+                            info_text = _format_info(con, job_id)
+                        except (KeyError, TypeError):
+                            info_text = f"Job {job_id} not found."
                         send(info_text)
 
                     else:
@@ -343,7 +390,7 @@ def send_bot_command_updates() -> None:
                             _send_document(TG_ALERT_CHAT_ID, res["eml"], caption)
                         else:
                             send(caption)
-                    except ValueError as e:
+                    except (ValueError, KeyError, TypeError) as e:
                         send(f"\u26a0 Approve {job_id} failed: {_esc(str(e))}")
                     continue
 
@@ -355,14 +402,17 @@ def send_bot_command_updates() -> None:
                         _reject(con, job_id, reason)
                         send(f"\u274c Rejected job {job_id}"
                              + (f" ({_esc(reason)})" if reason else ""))
-                    except ValueError as e:
+                    except (ValueError, KeyError, TypeError) as e:
                         send(f"\u26a0 Reject {job_id} failed: {_esc(str(e))}")
                     continue
 
                 m = _re.match(r"^/info\s+(\d+)", text, _re.I)
                 if m:
                     job_id = int(m.group(1))
-                    send(_format_info(con, job_id))
+                    try:
+                        send(_format_info(con, job_id))
+                    except (KeyError, TypeError):
+                        send(f"Job {job_id} not found.")
                     continue
 
         except Exception:  # noqa: BLE001
@@ -370,12 +420,12 @@ def send_bot_command_updates() -> None:
             time.sleep(10)
 
 
-async def start_bot_listener(con) -> None:
+async def start_bot_listener(con=None) -> None:
     """Async wrapper that runs the blocking polling loop in a thread.
-    Launch with asyncio.create_task(start_bot_listener(con)) from the watcher.
+    Launch with asyncio.create_task(start_bot_listener()) from the watcher.
     Exceptions are caught and logged so a bot failure never kills the watcher.
 
-    The con argument is kept for backwards compatibility but is no longer
+    The con argument is accepted for backwards compatibility but is no longer
     used — send_bot_command_updates opens its own connection to satisfy
     SQLite's thread-safety requirement.
     """

@@ -91,7 +91,7 @@ Copy `.env.example` → `.env`. Everything is optional; the pipeline runs with n
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_PROVIDER` | `ollama` | `gemini`, `groq`, `openrouter`, `cerebras`, `mistral`, `ollama`, `openai`, `deepseek`, `custom` |
+| `LLM_PROVIDER` | `gemini` | `gemini`, `groq`, `openrouter`, `cerebras`, `mistral`, `ollama`, `openai`, `deepseek`, `custom` |
 | `LLM_BASE_URL` | provider's | Override — any OpenAI-compatible endpoint |
 | `LLM_MODEL` | provider's | Override — model name |
 | `LLM_API_KEY` | provider's env var | e.g. `GEMINI_API_KEY`; local Ollama needs none |
@@ -258,7 +258,7 @@ The watcher must run 24/7 (~50 MB RAM, no GPU). The LLM does not — split them.
 - **Docker:** `Dockerfile` + `docker-compose.yml` at the root. Mount `./profile.yaml`, `./cv`, `./data`, `./outbox`, and your `.env`.
 - **macOS launchd:** `deploy/com.tensae.jobpipe.plist`
 - **Linux systemd:** `deploy/jobpipe-watch.service`
-- **Railway:** free Hobby tier (500 hrs/month) is enough for one always-on process. Start command: `python3 -m jobpipe watch --backfill 50`
+- **Railway:** no longer recommended — the free plan is effectively gone ($1/month credit), and the ephemeral filesystem won't persist SQLite/session files.
 
 ### Pushing to GitHub
 

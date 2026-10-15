@@ -40,7 +40,8 @@ DEADLINE_RE = re.compile(
     re.I,
 )
 REMOTE_RE = re.compile(r"\b(remote|work from home|wfh|anywhere)\b", re.I)
-ONSITE_RE = re.compile(r"\b(on-?site|in-?office|hybrid)\b", re.I)
+ONSITE_RE = re.compile(r"\b(on-?site|in-?office)\b", re.I)
+HYBRID_RE = re.compile(r"\bhybrid\b", re.I)
 TYPE_RE = [
     (re.compile(r"\bfull[- ]?time\b", re.I), "Full-time"),
     (re.compile(r"\bpart[- ]?time\b", re.I), "Part-time"),
@@ -83,7 +84,7 @@ TITLE_RE = re.compile(
 
 # Subject-line instruction pattern (e.g. "Subject: Application for {Role} - [Your Name]")
 _SUBJ_RE = re.compile(
-    r"(?:email\s+)?subject\s*(?:line)?\s*[:\-]\s*(.{10,120})",
+    r"(?:email\s+)?subject\s*(?:line)?\s*(?:[:\-]\s*|[\x27\x22])(.{10,120})?[\x27\x22]?",
     re.I,
 )
 
@@ -252,7 +253,14 @@ def regex_extract(text: str) -> ParsedJob:
     elif IMMEDIATE_RE.search(text):
         urgency = "immediate"
 
-    remote = True if REMOTE_RE.search(text) else (False if ONSITE_RE.search(text) else None)
+    if REMOTE_RE.search(text):
+        remote = True
+    elif HYBRID_RE.search(text):
+        remote = None  # hybrid — not on-site, not fully remote; leave undecided
+    elif ONSITE_RE.search(text):
+        remote = False
+    else:
+        remote = None
 
     etype = None
     for pat, label in TYPE_RE:

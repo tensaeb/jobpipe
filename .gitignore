@@ -27,3 +27,6 @@ venv/
 
 # Git bundle (full history) — must never be committed
 jobpipe.bundle
+
+# Stale AI review artifacts — not part of the shipped codebase
+.agents/

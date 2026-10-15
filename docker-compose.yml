@@ -9,4 +9,4 @@ services:
       - ./outbox:/app/outbox
       - ./cv:/app/cv
       - ./profile.yaml:/app/profile.yaml:ro
-      - ./telegram.session:/app/telegram.session
+      - ./data/telegram.session:/app/telegram.session

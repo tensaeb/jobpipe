@@ -64,16 +64,29 @@ def subject_for(match: Match, subject_instruction: str | None = None) -> str:
 
     If the post supplied an explicit subject-line instruction, substitute
     placeholder tokens and return it. Otherwise fall back to the default.
+    The result is validated: no newlines, max 200 chars, stripped.
     """
     if subject_instruction:
         name = _get_candidate_name()
         title = match.job.title or "Software Engineer"
         s = subject_instruction
         s = re.sub(r"\[Your Name\]", name, s, flags=re.I)
-        s = re.sub(r"\[(?:Role|Position)\]", title, s, flags=re.I)
-        return s.strip()
+        s = re.sub(r"\[(?:Role|Position|Job)\]", title, s, flags=re.I)
+        s = re.sub(r"\{(?:Role|Position|Job)\}", title, s, flags=re.I)
+        s = re.sub(r"\{\s*Role\s*\}", title, s, flags=re.I)
+        return _validate_subject(s)
     title = match.job.title or "Software Engineer"
     return f"Application for {title}"
+
+
+def _validate_subject(subject: str) -> str:
+    """Strip newlines, collapse whitespace, and cap at 200 chars.
+
+    Untrusted LLM-supplied subject text must never inject newlines or
+    absurdly long lines into outgoing email headers.
+    """
+    s = " ".join(subject.split())
+    return s[:200].strip()
 
 
 FALLBACK = """Dear Hiring Team,
