@@ -208,7 +208,8 @@ def cmd_stats(args, con):
 
     print(f"posts              {one('SELECT COUNT(*) FROM posts')}")
     print(f"jobs               {one('SELECT COUNT(*) FROM jobs')}")
-    print(f"  duplicates       {one(\"SELECT COUNT(*) FROM jobs WHERE status='DUPLICATE'\")}")
+    duplicates = one("SELECT COUNT(*) FROM jobs WHERE status='DUPLICATE'")
+    print(f"  duplicates       {duplicates}")
     for b in ("APPLY", "APPLY (HOLD)", "REVIEW", "SKIP"):
         n = con.execute("SELECT COUNT(*) FROM jobs WHERE bucket=?", (b,)).fetchone()[0]
         print(f"  {b:<16} {n}")
