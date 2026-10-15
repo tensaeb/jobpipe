@@ -131,32 +131,34 @@ def check(con, job_id: int, *, manual: bool = False) -> tuple[list[str], dict]:
     # write_body() appends [YOUR ANSWER: ...] markers when a post requests
     # salary, notice period, GitHub, etc. Transmitting these to recruiters
     # would be embarrassing — block until the user fills them in the .eml.
-    # Check both the stored DB body and the .eml file on disk (the user may
-    # have edited the .eml to fill in the placeholders).
+    # Check both the stored DB body and the .eml file on disk independently;
+    # if EITHER still has unfilled placeholders, block the send.
     placeholder_blocked = False
     if app is not None:
         db_body = app["email_body"] or ""
         if "[YOUR ANSWER:" in db_body:
-            # The user may have filled in the .eml on disk; check there too.
-            eml_path = app["eml_path"]
-            eml_body = ""
-            if eml_path:
-                try:
-                    from email import policy as _email_policy
-                    from email.parser import BytesParser
-                    p = Path(eml_path)
-                    if p.exists():
-                        _msg = BytesParser(policy=_email_policy.default).parse(p.open("rb"))
-                        eml_body = _msg.get_content() or ""
-                except Exception:  # noqa: BLE001
-                    eml_body = ""
-            if "[YOUR ANSWER:" in eml_body:
-                placeholder_blocked = True
-        if placeholder_blocked:
-            reasons.append(
-                "email body contains unfilled [YOUR ANSWER: ...] placeholders — "
-                "edit the .eml before sending"
-            )
+            placeholder_blocked = True
+
+        # Also check the .eml file on disk (the user may have edited it).
+        eml_path = app["eml_path"]
+        if eml_path:
+            try:
+                from email import policy as _email_policy
+                from email.parser import BytesParser
+                p = Path(eml_path)
+                if p.exists():
+                    _msg = BytesParser(policy=_email_policy.default).parse(p.open("rb"))
+                    eml_body = _msg.get_content() or ""
+                    if "[YOUR ANSWER:" in eml_body:
+                        placeholder_blocked = True
+            except Exception:  # noqa: BLE001
+                pass
+
+    if placeholder_blocked:
+        reasons.append(
+            "email body contains unfilled [YOUR ANSWER: ...] placeholders — "
+            "edit the .eml before sending"
+        )
 
     # --- don't spam the same employer ---------------------------------------
     if job["company"]:
