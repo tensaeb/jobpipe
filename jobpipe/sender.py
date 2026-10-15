@@ -31,6 +31,7 @@ from .config import (
     SMTP_USER,
 )
 from .db import now
+from .utils import html_escape
 
 log = logging.getLogger(__name__)
 
@@ -149,7 +150,7 @@ def send_batch(con, *, manual: bool = False, limit: int = 50) -> list[dict]:
 
 
 def _e(s) -> str:
-    return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return html_escape(s)
 
 
 def smtp_selftest() -> tuple[bool, str]:

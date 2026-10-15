@@ -265,16 +265,7 @@ class Agent:
                     (job_id,)).fetchone():
                 return {"error": f"job {job_id} already has an APPROVE decision "
                                  "(idempotency guard)"}
-            res = approve(self.con, job_id)  # raises ValueError when quarantined
-            # approve() records actor='user' by default; override to 'agent'.
-            # SQLite doesn't support ORDER BY in UPDATE, so use a subquery.
-            self.con.execute(
-                "UPDATE decisions SET actor='agent' WHERE id=("
-                "  SELECT MAX(id) FROM decisions WHERE job_id=? AND action='APPROVE'"
-                ")",
-                (job_id,),
-            )
-            self.con.commit()
+            res = approve(self.con, job_id, actor="agent")  # raises ValueError when quarantined
             reasons, _ = policy.check(self.con, job_id)
             return {"ok": True, "action": "approve", "job_id": job_id,
                     "eml": res["eml"], "subject": res["subject"], "cv": res["cv"],
@@ -366,16 +357,7 @@ def triage(con, *, limit: int = 20, act: bool = False) -> list[dict]:
         if act and verdict.decision in ("approve", "reject"):
             try:
                 if verdict.decision == "approve":
-                    approve(con, r["id"])
-                    # approve() always records actor='user'; correct it to 'agent'
-                    # so batch-triaged approvals don't contaminate the training signal.
-                    con.execute(
-                        "UPDATE decisions SET actor='agent' WHERE id=("
-                        "  SELECT MAX(id) FROM decisions WHERE job_id=? AND action='APPROVE'"
-                        ")",
-                        (r["id"],),
-                    )
-                    con.commit()
+                    approve(con, r["id"], actor="agent")
                 else:
                     reject(con, r["id"], f"agent: {verdict.reason}", actor="agent")
                 item["applied"] = True

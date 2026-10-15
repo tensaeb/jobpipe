@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from .config import MAX_POST_AGE_DAYS, TG_API_HASH, TG_API_ID, TG_BOT_TOKEN, TG_CHANNELS
 from .db import connect
-from .pipeline import ingest_post, process_post
+from .pipeline import ingest_post, process_post, update_job_score
 
 log = logging.getLogger(__name__)
 
@@ -103,10 +103,15 @@ async def run(backfill: int = 0):
             old_score = row["score"] or 0
             # Re-extract and re-score to detect meaningful edits.
             from .extract import extract as _extract
-            from .score import score as _score
+            from .score import score as _score, cv_variant as _cv_variant
             parsed, _ = await asyncio.to_thread(_extract, text)
-            match, _ = await asyncio.to_thread(_score, parsed, str(row["id"]), text)
+            match, cv = await asyncio.to_thread(_score, parsed, str(row["id"]), text)
             if abs(match.score - old_score) >= 5:
+                # Persist the new score/bucket/flags/cv before alerting so that
+                # a subsequent approve() call builds materials from current data.
+                await asyncio.to_thread(
+                    update_job_score, con, row["id"], match, cv
+                )
                 from . import notify
                 await asyncio.to_thread(
                     notify.send_with_buttons,
@@ -115,7 +120,7 @@ async def run(backfill: int = 0):
                         f"\u270f\ufe0f <b>Edited post</b> \u2014 score changed "
                         f"{old_score} \u2192 {match.score}\n"
                         + notify.format_alert(
-                            row["id"], match, parsed, row["id"], None,
+                            row["id"], match, parsed, cv, None,
                             include_commands=False,
                         )
                     ),
@@ -134,7 +139,7 @@ async def run(backfill: int = 0):
             )
             notify.send(
                 f"\u2705 Watcher alive | last post: {mins} mins ago"
-                f" | processed today: {_daily_count}"
+                f" | processed this session: {_daily_count}"
             )
 
     await client.start()

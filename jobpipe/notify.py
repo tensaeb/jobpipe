@@ -10,6 +10,7 @@ import urllib.request
 
 from .config import TG_ALERT_CHAT_ID, TG_BOT_TOKEN
 from .matcher import Match
+from .utils import html_escape
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def format_alert(
 
 
 def _esc(s) -> str:
-    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return html_escape(s)
 
 
 def send(text: str) -> bool:
@@ -235,22 +236,12 @@ def _format_info(con, job_id: int) -> str:
 def _bot_approve(con, job_id: int) -> dict:
     """Approve a job from the bot path and record actor='bot'.
 
-    pipeline.approve() always records actor='user', so we apply the same
-    post-hoc UPDATE that the agent path uses to correct the actor label.
-    Bot-initiated decisions must not pollute the user-vs-agent training signal.
+    Passes actor='bot' directly to pipeline.approve() so the decision row
+    is written correctly in a single operation — no post-hoc UPDATE needed.
     """
     from .pipeline import approve as _pipeline_approve
 
-    res = _pipeline_approve(con, job_id)
-    # Override the actor written by approve() from 'user' to 'bot'.
-    con.execute(
-        "UPDATE decisions SET actor='bot' WHERE id=("
-        "  SELECT MAX(id) FROM decisions WHERE job_id=? AND action='APPROVE'"
-        ")",
-        (job_id,),
-    )
-    con.commit()
-    return res
+    return _pipeline_approve(con, job_id, actor="bot")
 
 
 def send_bot_command_updates() -> None:
@@ -263,6 +254,7 @@ def send_bot_command_updates() -> None:
     rejects cross-thread access, and this function runs in a thread pool
     spawned by asyncio.to_thread.
     """
+    import re as _re
     import time
 
     if not (TG_BOT_TOKEN and TG_ALERT_CHAT_ID):
@@ -275,101 +267,107 @@ def send_bot_command_updates() -> None:
 
     offset = 0
     while True:
-        resp = _bot_api("getUpdates", {"offset": offset, "timeout": 30, "limit": 10})
-        if resp is None or not resp.get("ok"):
-            time.sleep(5)
-            continue
+        # Outer guard: any unexpected exception (network, JSON parse, etc.)
+        # logs and continues instead of killing the thread permanently.
+        try:
+            resp = _bot_api("getUpdates", {"offset": offset, "timeout": 30, "limit": 10})
+            if resp is None or not resp.get("ok"):
+                time.sleep(5)
+                continue
 
-        for update in resp.get("result", []):
-            offset = update["update_id"] + 1
+            for update in resp.get("result", []):
+                offset = update["update_id"] + 1
 
-            # --- inline keyboard callbacks -----------------------------------
-            if "callback_query" in update:
-                cq = update["callback_query"]
-                cq_id = cq["id"]
-                data = cq.get("data", "")
+                # --- inline keyboard callbacks -------------------------------
+                if "callback_query" in update:
+                    cq = update["callback_query"]
+                    cq_id = cq["id"]
+                    data = cq.get("data", "")
 
-                try:
-                    kind, _, id_str = data.partition(":")
-                    job_id = int(id_str)
-                except (ValueError, AttributeError):
-                    _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
-                                                     "text": "Unknown command."})
+                    try:
+                        kind, _, id_str = data.partition(":")
+                        job_id = int(id_str)
+                    except (ValueError, AttributeError):
+                        _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
+                                                         "text": "Unknown command."})
+                        continue
+
+                    if kind == "approve":
+                        try:
+                            res = _bot_approve(con, job_id)
+                            _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
+                                                             "text": f"Approved job {job_id}"})
+                            caption = f"\u2705 Approved job {job_id} — materials ready"
+                            if res.get("eml"):
+                                _send_document(TG_ALERT_CHAT_ID, res["eml"], caption)
+                            else:
+                                send(caption)
+                        except ValueError as e:
+                            _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
+                                                             "text": str(e)[:200]})
+                            send(f"\u26a0 Approve {job_id} failed: {_esc(str(e))}")
+
+                    elif kind == "reject":
+                        try:
+                            _reject(con, job_id)
+                            _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
+                                                             "text": f"Rejected job {job_id}"})
+                            send(f"\u274c Rejected job {job_id}")
+                        except ValueError as e:
+                            _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
+                                                             "text": str(e)[:200]})
+
+                    elif kind == "info":
+                        _bot_api("answerCallbackQuery", {"callback_query_id": cq_id, "text": ""})
+                        info_text = _format_info(con, job_id)
+                        send(info_text)
+
+                    else:
+                        _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
+                                                         "text": "Unknown button."})
                     continue
 
-                if kind == "approve":
+                # --- text commands -------------------------------------------
+                if "message" not in update:
+                    continue
+                msg = update["message"]
+                text = (msg.get("text") or "").strip()
+
+                m = _re.match(r"^/approve\s+(\d+)", text, _re.I)
+                if m:
+                    job_id = int(m.group(1))
                     try:
                         res = _bot_approve(con, job_id)
-                        _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
-                                                         "text": f"Approved job {job_id}"})
                         caption = f"\u2705 Approved job {job_id} — materials ready"
                         if res.get("eml"):
                             _send_document(TG_ALERT_CHAT_ID, res["eml"], caption)
                         else:
                             send(caption)
                     except ValueError as e:
-                        _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
-                                                         "text": str(e)[:200]})
                         send(f"\u26a0 Approve {job_id} failed: {_esc(str(e))}")
+                    continue
 
-                elif kind == "reject":
+                m = _re.match(r"^/reject\s+(\d+)(?:\s+(.+))?", text, _re.I)
+                if m:
+                    job_id = int(m.group(1))
+                    reason = (m.group(2) or "").strip() or None
                     try:
-                        _reject(con, job_id)
-                        _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
-                                                         "text": f"Rejected job {job_id}"})
-                        send(f"\u274c Rejected job {job_id}")
+                        _reject(con, job_id, reason)
+                        send(f"\u274c Rejected job {job_id}"
+                             + (f" ({_esc(reason)})" if reason else ""))
                     except ValueError as e:
-                        _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
-                                                         "text": str(e)[:200]})
+                        send(f"\u26a0 Reject {job_id} failed: {_esc(str(e))}")
+                    continue
 
-                elif kind == "info":
-                    _bot_api("answerCallbackQuery", {"callback_query_id": cq_id, "text": ""})
-                    info_text = _format_info(con, job_id)
-                    send(info_text)
+                m = _re.match(r"^/info\s+(\d+)", text, _re.I)
+                if m:
+                    job_id = int(m.group(1))
+                    send(_format_info(con, job_id))
+                    continue
 
-                else:
-                    _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
-                                                     "text": "Unknown button."})
-                continue
-
-            # --- text commands -----------------------------------------------
-            if "message" not in update:
-                continue
-            msg = update["message"]
-            text = (msg.get("text") or "").strip()
-
-            import re as _re
-
-            m = _re.match(r"^/approve\s+(\d+)", text, _re.I)
-            if m:
-                job_id = int(m.group(1))
-                try:
-                    res = _bot_approve(con, job_id)
-                    caption = f"\u2705 Approved job {job_id} — materials ready"
-                    if res.get("eml"):
-                        _send_document(TG_ALERT_CHAT_ID, res["eml"], caption)
-                    else:
-                        send(caption)
-                except ValueError as e:
-                    send(f"\u26a0 Approve {job_id} failed: {_esc(str(e))}")
-                continue
-
-            m = _re.match(r"^/reject\s+(\d+)(?:\s+(.+))?", text, _re.I)
-            if m:
-                job_id = int(m.group(1))
-                reason = (m.group(2) or "").strip() or None
-                try:
-                    _reject(con, job_id, reason)
-                    send(f"\u274c Rejected job {job_id}" + (f" ({_esc(reason)})" if reason else ""))
-                except ValueError as e:
-                    send(f"\u26a0 Reject {job_id} failed: {_esc(str(e))}")
-                continue
-
-            m = _re.match(r"^/info\s+(\d+)", text, _re.I)
-            if m:
-                job_id = int(m.group(1))
-                send(_format_info(con, job_id))
-                continue
+        except Exception:  # noqa: BLE001
+            log.exception("bot polling loop error — retrying in 10s")
+            time.sleep(10)
 
 
 async def start_bot_listener(con) -> None:

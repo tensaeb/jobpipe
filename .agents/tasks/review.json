@@ -1,0 +1,46 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "label": "Edited-post score not persisted",
+      "severity": "blocking",
+      "confidence": "confirmed",
+      "description": "_edited in watcher.py re-scores the post and fires a Telegram alert when the score shifts by ≥5, but never writes the new score, bucket, flags_json, or cv_variant back to the jobs row. A subsequent approve call rebuilds the match from the stale stored row.",
+      "action": "Add UPDATE jobs SET score=?, bucket=?, flags_json=?, cv_variant=? WHERE id=? after the alert fires in _edited, or introduce a pipeline.update_job_score() helper."
+    },
+    {
+      "id": 2,
+      "label": "Bot listener exits permanently on unexpected exception",
+      "severity": "blocking",
+      "confidence": "confirmed",
+      "description": "send_bot_command_updates handles a failed poll response with time.sleep(5)/continue but does not catch exceptions that escape the per-update try/continue block. An unexpected error from _bot_api or json.loads exits the thread; start_bot_listener logs 'bot listener crashed' once and never restarts.",
+      "action": "Wrap the while True body in an outer try/except Exception that logs and continues, or add restart logic in start_bot_listener."
+    },
+    {
+      "id": 3,
+      "label": "Subject-instruction lost for LLM-only extractions",
+      "severity": "blocking",
+      "confidence": "confirmed",
+      "description": "approve() re-extracts subject_instruction with regex_extract() only. An instruction the LLM extracted in a prose format the regex misses is absent at approval time because subject_instruction is not stored in the jobs table.",
+      "action": "Add a subject_instruction column to jobs populated at process_post time, or call the LLM at approval time when the regex finds nothing."
+    },
+    {
+      "id": 4,
+      "label": "_daily_count reports since restart, not today",
+      "severity": "minor",
+      "confidence": "confirmed",
+      "description": "_daily_count increments on every processed post and never resets. The heartbeat says 'processed today: N' but N is the lifetime count since the watcher started.",
+      "action": "Track a (date, count) pair and reset when the date changes, or change the heartbeat label to 'processed this session'."
+    },
+    {
+      "id": 5,
+      "label": "approve() actor post-hoc correction is fragile",
+      "severity": "minor",
+      "confidence": "confirmed",
+      "description": "_bot_approve and the agent's _t_decide both call approve() (which writes actor='user') and then correct it with a separate UPDATE. This works in the current single-threaded design but would silently mis-attribute concurrent approvals.",
+      "action": "Add an actor= parameter to pipeline.approve() so callers set it directly."
+    }
+  ],
+  "reviewDoc": "/Users/dr.befekaduzeleke/Desktop/Python/jobpipe/.agents/tasks/review.md"
+}

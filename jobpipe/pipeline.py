@@ -103,8 +103,8 @@ def process_post(con, post_id: int, alert: bool = True) -> int | None:
             required_json,preferred_json,salary_raw,salary_confidence,application_email,
             application_telegram,application_url,deadline_text,urgency,materials_json,
             extracted_by,score,bucket,evidence_depth,flags_json,blockers_json,cv_variant,
-            fingerprint,duplicate_of,status,created_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            fingerprint,duplicate_of,status,subject_instruction,created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (post_id, parsed.title, parsed.company, parsed.location,
          int(parsed.remote) if parsed.remote is not None else None,
          parsed.employment_type, parsed.min_years,
@@ -113,7 +113,8 @@ def process_post(con, post_id: int, alert: bool = True) -> int | None:
          parsed.application_telegram, parsed.application_url,
          parsed.deadline_text, parsed.urgency, jl(parsed.required_materials),
          method, match.score, match.bucket, round(match.evidence_depth, 3),
-         jl(match.flags), jl(match.blockers), cv, fp, dupe_of, status, now()),
+         jl(match.flags), jl(match.blockers), cv, fp, dupe_of, status,
+         parsed.subject_instruction, now()),
     )
     con.commit()
     job_id = cur.lastrowid
@@ -180,7 +181,7 @@ def record_decision(con, job_id: int, action: str, reason: str | None = None,
     con.commit()
 
 
-def approve(con, job_id: int) -> dict:
+def approve(con, job_id: int, actor: str = "user") -> dict:
     """Generate materials. Never sends. Returns a summary dict."""
     row, match = _rebuild_match(con, job_id)
     if row["status"] == "QUARANTINED":
@@ -190,11 +191,13 @@ def approve(con, job_id: int) -> dict:
         )
     post = con.execute("SELECT * FROM posts WHERE id=?", (row["post_id"],)).fetchone()
 
-    # Re-extract subject_instruction from the post body using a fast regex-only
-    # call — no LLM, no new DB column, no migration needed.
-    from .extract import regex_extract as _re_extract
-    _parsed_quick = _re_extract(post["body"])
-    subject_instr = _parsed_quick.subject_instruction
+    # Re-extract subject_instruction: prefer the stored DB value (populated at
+    # process_post time), fall back to a quick regex over the post body.
+    subject_instr = row["subject_instruction"] if row["subject_instruction"] else None
+    if subject_instr is None:
+        from .extract import regex_extract as _re_extract
+        _parsed_quick = _re_extract(post["body"])
+        subject_instr = _parsed_quick.subject_instruction
 
     hard_blocks = [f for f in ul(row["flags_json"]) if f.startswith("BLOCKED:")]
     body = compose.write_body(match, post["body"],
@@ -211,7 +214,7 @@ def approve(con, job_id: int) -> dict:
     )
     con.execute("UPDATE jobs SET status='MATERIALS_READY' WHERE id=?", (job_id,))
     con.commit()
-    record_decision(con, job_id, "APPROVE", actor="user")
+    record_decision(con, job_id, "APPROVE", actor=actor)
 
     return {
         "job_id": job_id, "eml": str(eml), "subject": subject,
@@ -224,6 +227,19 @@ def reject(con, job_id: int, reason: str | None = None, actor: str = "user"):
     con.execute("UPDATE jobs SET status='REJECTED' WHERE id=?", (job_id,))
     con.commit()
     record_decision(con, job_id, "REJECT", reason, actor=actor)
+
+
+def update_job_score(con, job_id: int, match, cv: str):
+    """Persist a re-scored match back to the jobs row.
+
+    Called by the edited-message handler after detecting a score change ≥5,
+    so that a subsequent approve() call builds materials from current data.
+    """
+    con.execute(
+        "UPDATE jobs SET score=?, bucket=?, flags_json=?, cv_variant=? WHERE id=?",
+        (match.score, match.bucket, jl(match.flags), cv, job_id),
+    )
+    con.commit()
 
 
 def mark_sent(con, job_id: int):

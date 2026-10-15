@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     fingerprint         TEXT,
     duplicate_of        INTEGER REFERENCES jobs(id),
     status              TEXT NOT NULL DEFAULT 'NEW',
+    subject_instruction TEXT,
     created_at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
@@ -102,6 +103,12 @@ def connect() -> sqlite3.Connection:
     # Safe migration: add actor column if the DB predates this change.
     try:
         con.execute("ALTER TABLE decisions ADD COLUMN actor TEXT")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    # Safe migration: add subject_instruction column to jobs if the DB predates this change.
+    try:
+        con.execute("ALTER TABLE jobs ADD COLUMN subject_instruction TEXT")
         con.commit()
     except sqlite3.OperationalError:
         pass  # column already exists

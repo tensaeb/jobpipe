@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # profile.yaml — canonical candidate fact bank
-# Source of truth: "Tensae CV - Software.pdf" (2 pages), parsed 2026-10-07.
-# 
+# Source of truth: "Tensae CV - Software.pdf" (2 pages), parsed 2026-10-14.
+#
 # RULE: nothing in this file may be asserted in an application unless it
 # appears verbatim or near-verbatim in the CV. Nothing here was inferred
 # about the candidate's biography. Skill *tiers* ARE inferred, and are
@@ -24,35 +24,37 @@ education:
 
 # --- Employment timeline ----------------------------------------------------
 # Computed, not claimed. Used by the matcher for experience gating.
+# Overlapping roles (e.g. CTO + Beta) are counted once in the merged span.
 experience:
-  total_months_employed: 48          # sum of the four roles below
-  years_claimed_on_cv: "4+"          # consistent with the timeline AS WRITTEN
+  total_months_employed: 50          # merged span: 2021-10 -> present (Oct 2026)
+  years_claimed_on_cv: "4+"
   first_role_start: "2021-10"
-  last_role_end: "2025-12"
-  currently_employed: false
-  months_since_last_role: 10         # 2025-12 -> 2026-10  ** SEE conflicts **
+  last_role_end: null                # currently employed
+  currently_employed: true
+  months_since_last_role: null       # N/A — currently employed
 
 roles:
+  - id: CTO_NODELALA
+    company: "Nodelala PLC"
+    title: "Chief Technology Officer"
+    start: "2024-09"
+    end: null                        # current role
+    evidence:
+      CTO_01: "Directed technical strategy and architectural planning for cross-platform solutions, overseeing both web applications and mobile app development lifecycles."
+      CTO_02: "Managed and mentored the developer team, coordinating task allocations, conducting code reviews, and establishing robust engineering standards."
+      CTO_03: "Developed and deployed core backend services, managed cPanel hosting configurations, and set up SSL certificates to ensure high uptime."
+      CTO_04: "Handled mobile deployment for both iOS and Android platforms, ensuring smooth distribution and release management."
+
   - id: BETA
     company: "Beta Tech Hub"
     title: "Software Engineer & Team Leader"
     start: "2024-09"
     end: "2025-12"
-    disputed: true                   # see conflicts.BETA_DATES
+    disputed: true                   # see conflicts.BETA_DATES — overlaps with CTO role
     evidence:
       BETA_01: "Led end-to-end delivery of a Property Management System, giving landlords and property managers a single platform for role-based access control, financial tracking, and automated notifications."
       BETA_02: "Coordinated sprint planning, task allocation, and key technical decisions to keep releases on schedule without sacrificing quality."
       BETA_03: "Built and supported the e-commerce platforms Global Trade House and Efoyita, strengthening B2B/B2C transaction flows and the overall customer experience."
-
-  - id: ONETAP
-    company: "OneTap Technologies"
-    title: "Full-Stack Engineer"
-    start: "2023-09"
-    end: "2024-05"
-    evidence:
-      ONETAP_01: "Built and maintained scalable web applications with HTML, CSS, JavaScript, Python, and SQL, keeping interfaces responsive and data layers well integrated."
-      ONETAP_02: "Delivered the OneTap Technologies corporate website, strengthening brand presence and user engagement."
-      ONETAP_03: "Supported Tsedey Bank's USSD initiative and mobile app design, improving accessibility and the overall customer experience."
 
   - id: LINE
     company: "Line Addis Consultancy"
@@ -95,15 +97,13 @@ projects:
 domains:
   - { name: "real estate / property management", strength: strong, evidence: [BETA_01, NODELALA_01] }
   - { name: "e-commerce",                        strength: strong, evidence: [BETA_03] }
+  - { name: "leadership / CTO",                  strength: strong, evidence: [CTO_01, CTO_02] }
   - { name: "education / school management",     strength: medium, evidence: [LINE_01] }
   - { name: "public sector / government",        strength: medium, evidence: [EFDP_01, EFDP_02] }
   - { name: "social platform",                   strength: medium, evidence: [BETE_01] }
-  - { name: "banking / fintech",                 strength: weak,   evidence: [ONETAP_03] }
   - { name: "machine learning",                  strength: weak,   evidence: [ML_01] }
 
 # --- Skills, tiered by strength of evidence ---------------------------------
-# THIS IS THE KEY STRUCTURE. The plan's original profile.yaml treated every
-# listed skill as equal, which is what produced its inflated AI/ML scores.
 #
 #   named     - named explicitly inside an employment bullet          (weight 1.00)
 #   inferred  - role title/duties strongly imply it, but UNNAMED      (weight 0.70)
@@ -114,46 +114,54 @@ domains:
 # probe it. The matcher must not treat it as production depth.
 skills:
   # --- named in an employment bullet ---
-  Python:        { tier: named,    evidence: [ONETAP_01] }
-  JavaScript:    { tier: named,    evidence: [ONETAP_01] }
-  SQL:           { tier: named,    evidence: [ONETAP_01] }
-  HTML5:         { tier: named,    evidence: [ONETAP_01] }
-  CSS3:          { tier: named,    evidence: [ONETAP_01] }
+  Python:        { tier: named,    evidence: [BETE_01] }
+  JavaScript:    { tier: named,    evidence: [BETE_01] }
+  SQL:           { tier: named,    evidence: [BETE_01] }
+  HTML5:         { tier: named,    evidence: [BETE_01] }
+  CSS3:          { tier: named,    evidence: [BETE_01] }
 
   # --- strongly implied by role scope, but no technology named ---
-  "REST APIs":   { tier: inferred, evidence: [BETE_02] }
-  "Database design": { tier: inferred, evidence: [BETE_02] }
-  "Backend development": { tier: inferred, evidence: [BETE_01, BETE_02] }
-  "Frontend development": { tier: inferred, evidence: [EFDP_02, LINE_02] }
-  "Full-stack development": { tier: inferred, evidence: [ONETAP_01, NODELALA_01] }
-  "RBAC / auth":  { tier: inferred, evidence: [BETA_01, EFDP_02] }
-  "UI/UX":        { tier: inferred, evidence: [LINE_02] }
-  "Unit testing": { tier: inferred, evidence: [LINE_03] }
-  "Code review":  { tier: inferred, evidence: [LINE_03, BETE_03] }
+  "REST APIs":             { tier: inferred, evidence: [BETE_02] }
+  "Database design":       { tier: inferred, evidence: [BETE_02] }
+  "Backend development":   { tier: inferred, evidence: [BETE_01, BETE_02] }
+  "Frontend development":  { tier: inferred, evidence: [EFDP_02, LINE_02] }
+  "Full-stack development": { tier: inferred, evidence: [BETE_01, NODELALA_01] }
+  "RBAC / auth":           { tier: inferred, evidence: [BETA_01, EFDP_02] }
+  "UI/UX":                 { tier: inferred, evidence: [LINE_02] }
+  "Unit testing":          { tier: inferred, evidence: [LINE_03] }
+  "Code review":           { tier: inferred, evidence: [LINE_03, BETE_03, CTO_02] }
   "Agile / sprint planning": { tier: inferred, evidence: [BETA_02] }
-  "Team leadership": { tier: inferred, evidence: [BETA_02] }
-  Jira:          { tier: named,    evidence: [LINE_03] }
+  "Team leadership":       { tier: inferred, evidence: [BETA_02, CTO_02] }
+  "Technical strategy":    { tier: inferred, evidence: [CTO_01] }
+  "Architecture":          { tier: inferred, evidence: [CTO_01] }
+  "DevOps / deployment":   { tier: inferred, evidence: [CTO_03] }
+  "iOS/Android deployment": { tier: inferred, evidence: [CTO_04] }
+  Jira:                    { tier: named,    evidence: [LINE_03] }
 
   # --- evidenced by portfolio project only ---
   Streamlit:      { tier: project, evidence: [ML_01] }
   "Scikit-learn": { tier: project, evidence: [ML_01], note: "regression models; library not named in CV" }
-  "Mobile development": { tier: project, evidence: [NODELALA_01], note: "'across web and mobile'; no platform named, no store release stated" }
+  "Mobile development": { tier: project, evidence: [NODELALA_01], note: "'across web and mobile'; no platform named" }
 
   # --- competencies list only: NO narrative evidence anywhere in the CV ---
   TypeScript:    { tier: listed }
   Java:          { tier: listed }
+  Dart:          { tier: listed }
   React:         { tier: listed }
   "Next.js":     { tier: listed }
   "React Native": { tier: listed }
   "Tailwind CSS": { tier: listed }
   "Redux Toolkit": { tier: listed }
   Figma:         { tier: listed }
-  "Adobe XD":    { tier: listed }
+  "Adobe XB":    { tier: listed }
+  Flutter:       { tier: listed }
+  Angular:       { tier: listed }
   "Node.js":     { tier: listed }
   Express:       { tier: listed }
   NestJS:        { tier: listed }
   Django:        { tier: listed }
   FastAPI:       { tier: listed }
+  "Spring Boot": { tier: listed }
   GraphQL:       { tier: listed }
   PostgreSQL:    { tier: listed }
   MongoDB:       { tier: listed }
@@ -173,9 +181,10 @@ skills:
   "CI/CD":       { tier: listed }
 
 # --- Skills the candidate does NOT have (hard negatives) --------------------
-# Used to reject confidently rather than letting an LLM hedge.
+# Only list technologies you genuinely can't screen for. Angular, Flutter,
+# Dart are moved to 'listed' above — keep them there only if you can handle
+# a basic technical question on each.
 absent:
-  - Angular
   - Svelte
   - Vue
   - Kubernetes
@@ -189,8 +198,6 @@ absent:
   - Ruby
   - Kotlin
   - Swift
-  - Flutter
-  - Dart
   - Elixir
   - Scala
 
@@ -199,24 +206,14 @@ conflicts:
     severity: critical
     field: "Beta Tech Hub employment dates"
     cv_says: "2024-09 to 2025-12"
-    supporting_letter_says: "2024-10-10 to 2025-04-22"
-    impact: >
-      If the letter is correct, this role is 6.5 months rather than 16.
-      Total experience falls from ~48 months to ~38 (3.2 years), the "4+ years"
-      headline becomes unsupportable, and the employment gap grows from
-      10 months to 18. Resolve manually before any application is sent.
+    note: >
+      Overlaps with CTO at Nodelala PLC (2024-09 – present). Verify that
+      both are accurate and that you can explain the concurrent roles to a
+      recruiter. Resolve before sending any application.
     action: BLOCK_SENDING
 
 gaps:
   critical:
-    # GITHUB_MISSING resolved 2026-10-07: github.com/tensaeb, linkedin.com/in/tensaeb
-    # Still ADD THESE TO THE CV ITSELF — the fact bank knowing them does not
-    # put them on the document a recruiter opens.
-    - id: EMPLOYMENT_GAP
-      detail: >
-        Last role ends 2025-12; today is 2026-10. A 10-month unexplained gap
-        is the first thing a reviewer will notice, and nothing in the CV
-        addresses it. Not a software problem.
     - id: UNNAMED_STACK
       detail: >
         30+ technologies are claimed in Technical Competencies, but only 5
