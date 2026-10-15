@@ -36,8 +36,8 @@ TG_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID")
 LLM_PROVIDERS: dict[str, dict] = {
     "ollama":     {"base_url": "http://localhost:11434/v1",
                    "model": "qwen3:8b", "key_env": []},
-    "gemini":     {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-                   "model": "gemini-2.0-flash",
+    "gemini":     {"base_url": "https://generativelanguage.googleapis.com/v1beta/",
+                   "model": "gemini-3.8-flash",
                    "key_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]},
     "groq":       {"base_url": "https://api.groq.com/openai/v1",
                    "model": "llama-3.3-70b-versatile", "key_env": ["GROQ_API_KEY"]},
@@ -79,6 +79,12 @@ LLM_BASE_URL = _LLM["base_url"]
 LLM_MODEL = _LLM["model"]
 LLM_API_KEY = _LLM["api_key"]
 LLM_ENABLED = os.getenv("LLM_ENABLED", "auto").strip().lower()  # auto | on | off
+
+# --- rate limit handling ------------------------------------------------------
+LLM_RATE_LIMIT_THRESHOLD = float(os.getenv("LLM_RATE_LIMIT_THRESHOLD", "0.75"))  # notify at 75% used
+LLM_RATE_LIMIT_WINDOW = int(os.getenv("LLM_RATE_LIMIT_WINDOW", "300"))  # seconds between notifications
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))  # max retries on 429
+LLM_BACKOFF_BASE = float(os.getenv("LLM_BACKOFF_BASE", "2.0"))  # base backoff seconds
 
 # --- agent ------------------------------------------------------------------
 AGENT_MAX_TURNS = int(os.getenv("AGENT_MAX_TURNS", "12"))  # tool loop bound

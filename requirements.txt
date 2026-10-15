@@ -4,7 +4,8 @@ pyyaml>=6.0
 pydantic>=2.0
 rapidfuzz>=3.0
 python-dotenv>=1.0
-# LLM client for every OpenAI-compatible provider (ollama, gemini, groq,
-# openrouter, cerebras, mistral, ...). Without it `jobpipe agent` and
-# `llm-test` exit with a clear message; the regex pipeline still works.
+# LLM clients:
+#   google-genai — Gemini via the new Interactions API (default provider)
+#   openai       — OpenAI-compatible endpoints (ollama, groq, etc.) + selftest mock
+google-genai>=1.0
 openai>=1.40

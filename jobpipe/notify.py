@@ -306,9 +306,9 @@ def send_bot_command_updates() -> None:
         # Outer guard: any unexpected exception (network, JSON parse, etc.)
         # logs and continues instead of killing the thread permanently.
         try:
-            # getUpdates asks Telegram to hold up to 25s; urlopen timeout is
-            # 20s so idle polls fail cleanly instead of hanging forever.
-            resp = _bot_api("getUpdates", {"offset": offset, "timeout": 25, "limit": 10})
+            # getUpdates asks Telegram to hold up to 20s to stay under
+            # urlopen's 20s timeout — avoids idle-poll timeout warnings.
+            resp = _bot_api("getUpdates", {"offset": offset, "timeout": 20, "limit": 10})
             if resp is None or not resp.get("ok"):
                 time.sleep(5)
                 continue

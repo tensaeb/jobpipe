@@ -1,10 +1,9 @@
-"""Pluggable LLM access — the entire abstraction.
+"""Pluggable LLM access — Google Gemini via the Interactions API.
 
-Every provider in config.LLM_PROVIDERS (Ollama, Google Gemini, Groq,
-OpenRouter, Cerebras, Mistral, OpenAI, DeepSeek, custom) exposes an
-OpenAI-compatible chat-completions endpoint, so one client covers local and
-hosted. Swap providers with a single env var: LLM_PROVIDER.
-The value here is the *validation*, not the indirection.
+Uses the new google-genai SDK with `client.interactions.create()`.
+Default model: gemini-3.8-flash. Falls back to regex-only if the provider
+is unreachable. Tracks rate limit usage and notifies via Telegram when
+approaching thresholds.
 """
 from __future__ import annotations
 
@@ -15,14 +14,31 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ValidationError
 
-from .config import LLM_API_KEY, LLM_BASE_URL, LLM_ENABLED, LLM_MODEL, LLM_PROVIDER
+from .config import (
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    LLM_ENABLED,
+    LLM_MODEL,
+    LLM_PROVIDER,
+    LLM_RATE_LIMIT_THRESHOLD,
+    LLM_RATE_LIMIT_WINDOW,
+    LLM_MAX_RETRIES,
+    LLM_BACKOFF_BASE,
+)
+from .db import now
 
 log = logging.getLogger(__name__)
 _client = None
 _probe_result: bool | None = None
 _probe_time: float | None = None
-_PROBE_TTL_SECONDS = 300  # re-probe every 5 minutes so a cold-start blip
-                           # doesn't disable the LLM for the life of the process.
+_PROBE_TTL_SECONDS = 300  # re-probe every 5 minutes
+
+# --- rate limit tracking ---------------------------------------------------
+# Module-level counters shared across all calls in this process.
+_rl_remaining: int | None = None   # requests remaining in current window
+_rl_limit: int | None = None       # total requests allowed per window
+_rl_reset_at: float | None = None  # unix timestamp when window resets
+_rl_notified_at: float | None = None  # last time we sent a threshold alert
 
 
 @dataclass
@@ -42,51 +58,182 @@ class AssistantReply:
 def _get_client():
     global _client
     if _client is None:
-        from openai import OpenAI
+        from google import genai
 
-        _client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, timeout=120.0)
+        _client = genai.Client(api_key=LLM_API_KEY or None)
     return _client
 
 
+def _notify_rate_limit(msg: str) -> None:
+    """Send a Telegram alert about rate limit status."""
+    global _rl_notified_at
+    now_ts = time.time()
+    # Throttle notifications: max once per LLM_RATE_LIMIT_WINDOW seconds.
+    if _rl_notified_at is not None and now_ts - _rl_notified_at < LLM_RATE_LIMIT_WINDOW:
+        return
+    _rl_notified_at = now_ts
+    try:
+        from . import notify
+        notify.send(f"⚠ {msg}")
+    except Exception:  # noqa: BLE001
+        log.debug("could not send rate-limit Telegram alert")
+
+
+def _record_rate_limit(remaining: int | None, limit: int | None, reset_at: float | None) -> None:
+    """Store rate limit info from the last response and alert if nearing threshold."""
+    global _rl_remaining, _rl_limit, _rl_reset_at
+    _rl_remaining = remaining
+    _rl_limit = limit
+    _rl_reset_at = reset_at
+
+    if remaining is not None and limit is not None and limit > 0:
+        used_pct = (limit - remaining) / limit * 100
+        if used_pct >= LLM_RATE_LIMIT_THRESHOLD * 100:
+            _notify_rate_limit(
+                f"LLM rate limit {used_pct:.0f}% used "
+                f"({remaining}/{limit} remaining, resets at {time.ctime(reset_at) if reset_at else '?'})"
+            )
+
+
+def _extract_rate_limit_headers(response) -> tuple[int | None, int | None, float | None]:
+    """Best-effort extraction of rate limit info from a google-genai response.
+
+    The google-genai SDK does not always expose HTTP headers directly, so we
+    try several attribute paths and fall back to None.
+    """
+    remaining = None
+    limit = None
+    reset_at = None
+
+    # Try common attribute locations.
+    for attr in ("response", "_response", "http_response", "raw_response"):
+        resp = getattr(response, attr, None)
+        if resp is None:
+            continue
+        headers = getattr(resp, "headers", None) or getattr(resp, "header", None)
+        if headers:
+            remaining = headers.get("x-ratelimit-remaining") or headers.get("X-RateLimit-Remaining")
+            limit = headers.get("x-ratelimit-limit") or headers.get("X-RateLimit-Limit")
+            reset = headers.get("x-ratelimit-reset") or headers.get("X-RateLimit-Reset")
+            if reset is not None:
+                try:
+                    reset_at = float(reset)
+                except (ValueError, TypeError):
+                    reset_at = None
+            break
+
+    if remaining is not None:
+        try:
+            remaining = int(remaining)
+        except (ValueError, TypeError):
+            remaining = None
+    if limit is not None:
+        try:
+            limit = int(limit)
+        except (ValueError, TypeError):
+            limit = None
+
+    return remaining, limit, reset_at
+
+
 def _create(messages, *, tools=None, temperature=0, max_tokens=None, json_mode=False):
-    kwargs: dict = {"model": LLM_MODEL, "messages": messages, "temperature": temperature}
+    """Call the Gemini Interactions API with rate limit handling.
+
+    Retries with exponential backoff on 429 (rate limited) responses.
+    Notifies via Telegram when remaining requests drop below the configured
+    threshold.
+    """
+    import httpx
+
+    parts = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if role == "system":
+            parts.append(f"System instruction: {content}")
+        else:
+            parts.append(content)
+    input_text = "\n\n".join(parts)
+
+    kwargs: dict = {
+        "model": LLM_MODEL,
+        "input": input_text,
+    }
     if tools:
         kwargs["tools"] = tools
-    if max_tokens:
-        kwargs["max_tokens"] = max_tokens
+    extra: dict = {}
     if json_mode:
-        kwargs["response_format"] = {"type": "json_object"}
-    return _get_client().chat.completions.create(**kwargs)
+        extra["response_format"] = {
+            "type": "text",
+            "mime_type": "application/json",
+        }
+    if extra:
+        kwargs["extra_body"] = extra
+
+    last_exc = None
+    for attempt in range(LLM_MAX_RETRIES):
+        try:
+            response = _get_client().interactions.create(**kwargs)
+            # Record rate limit info if available.
+            remaining, limit, reset_at = _extract_rate_limit_headers(response)
+            _record_rate_limit(remaining, limit, reset_at)
+            return response
+        except Exception as e:  # noqa: BLE001
+            last_exc = e
+            # Check for 429 rate limited.
+            status = getattr(e, "status_code", None) or getattr(e, "code", None)
+            if status == 429:
+                # Try to extract retry-after from error message or headers.
+                retry_after = None
+                msg = str(e)
+                import re as _re
+                m = _re.search(r"retry.?after.?[:\s]+(\d+)", msg, _re.I)
+                if m:
+                    retry_after = int(m.group(1))
+                if retry_after is None and hasattr(e, "response"):
+                    headers = getattr(e.response, "headers", None) or {}
+                    retry_after = headers.get("retry-after") or headers.get("Retry-After")
+                    if retry_after is not None:
+                        try:
+                            retry_after = float(retry_after)
+                        except (ValueError, TypeError):
+                            retry_after = None
+
+                backoff = retry_after if retry_after is not None else LLM_BACKOFF_BASE * (2 ** attempt)
+                log.warning(
+                    "LLM rate limited (429), retrying in %.0fs (attempt %d/%d)",
+                    backoff, attempt + 1, LLM_MAX_RETRIES,
+                )
+                _notify_rate_limit(f"LLM rate limited (429) — backing off {backoff:.0f}s")
+                time.sleep(backoff)
+                continue
+            # Non-429 error: don't retry, just raise.
+            raise
+    # Exhausted retries.
+    raise last_exc
 
 
 def _robust_create(messages, **kw):
-    """Providers differ on optional params (response_format, max_tokens).
-    Retry once without them rather than lose the call.
-
-    Tracks which optional arguments were actually emitted to the provider so
-    the retry drops exactly those (e.g. json_mode maps to response_format).
-    """
+    """Retry once without optional params if the provider rejects them."""
     emitted = set(kw.keys())
     try:
         return _create(messages, **kw)
     except Exception as e:  # noqa: BLE001
-        # Determine which optional params were actually sent.
-        sent_optional = emitted & {"response_format", "max_tokens", "json_mode"}
+        # Optional params live in extra_body; check if any were sent.
+        extra = kw.get("extra_body", {})
+        sent_optional = bool(extra)
         if not sent_optional:
             raise
-        # Build a clean kwargs without the optional params that may be
-        # rejected by this provider.
-        retry_kw = {k: v for k, v in kw.items() if k not in sent_optional}
+        retry_kw = {k: v for k, v in kw.items() if k != "extra_body"}
         log.debug(
             "strict call failed (%s); retrying without optional params %s",
-            e, sorted(sent_optional),
+            e, sorted(extra.keys()),
         )
         return _create(messages, **retry_kw)
 
 
 def available() -> bool:
-    """True if an LLM is reachable. Cached with a 5-minute TTL so a cold-start
-    blip doesn't disable the LLM for the life of a 24/7 watcher."""
+    """True if an LLM is reachable. Cached with a 5-minute TTL."""
     global _probe_result, _probe_time
     if LLM_ENABLED == "off":
         return False
@@ -95,44 +242,19 @@ def available() -> bool:
             and now_ts - _probe_time < _PROBE_TTL_SECONDS:
         return _probe_result
     try:
-        model_list = _get_client().models.list()
-        # Gemini's OpenAI-compatible /models returns ids with a "models/"
-        # prefix (e.g. "models/gemini-2.0-flash"). Strip it for comparison.
-        ids = [m.id for m in (model_list.data if hasattr(model_list, "data")
-                               else list(model_list))]
-        normalized = {i.split("/", 1)[-1] for i in ids}
-        if ids and LLM_MODEL not in normalized:
-            log.warning(
-                "LLM model %r not found in provider's model list "
-                "(available: %s ...). Falling back to regex-only.",
-                LLM_MODEL,
-                ", ".join(ids[:5]),
-            )
-            _probe_result = False
-            _probe_time = now_ts
-            return False
+        r = _create([{"role": "user", "content": "ping"}], max_tokens=5, temperature=0)
         _probe_result = True
         _probe_time = now_ts
-    except Exception as first:  # noqa: BLE001  # some gateways omit /models
-        log.debug("models.list probe failed (%s); trying a 1-token chat", first)
-        try:
-            _create([{"role": "user", "content": "ping"}], max_tokens=1, temperature=0)
-            _probe_result = True
-            _probe_time = now_ts
-        except Exception as e:  # noqa: BLE001
-            if LLM_ENABLED == "on":
-                log.warning("LLM_ENABLED=on but provider unreachable: %s", e)
-            _probe_result = False
-            _probe_time = now_ts
+    except Exception as e:  # noqa: BLE001
+        if LLM_ENABLED == "on":
+            log.warning("LLM_ENABLED=on but provider unreachable: %s", e)
+        _probe_result = False
+        _probe_time = now_ts
     return _probe_result
 
 
 def complete_json(system: str, user: str, schema: type[BaseModel]) -> BaseModel | None:
-    """Return a validated model instance, or None on any failure.
-
-    Never raises into the pipeline: a parse failure must downgrade a job to
-    regex-only extraction, not lose it.
-    """
+    """Return a validated model instance, or None on any failure."""
     if not available():
         return None
     messages = [
@@ -141,8 +263,7 @@ def complete_json(system: str, user: str, schema: type[BaseModel]) -> BaseModel 
     ]
     try:
         r = _robust_create(messages, temperature=0, json_mode=True)
-        raw = r.choices[0].message.content or "{}"
-        # Models sometimes wrap JSON in prose or fences.
+        raw = r.output_text or "{}"
         start, end = raw.find("{"), raw.rfind("}")
         if start >= 0 and end > start:
             raw = raw[start : end + 1]
@@ -163,7 +284,7 @@ def complete_text(system: str, user: str, max_tokens: int = 500) -> str | None:
     ]
     try:
         r = _robust_create(messages, temperature=0.3, max_tokens=max_tokens)
-        return (r.choices[0].message.content or "").strip()
+        return (r.output_text or "").strip()
     except Exception as e:  # noqa: BLE001
         log.warning("LLM call failed: %s", e)
         return None
@@ -171,31 +292,28 @@ def complete_text(system: str, user: str, max_tokens: int = 500) -> str | None:
 
 def complete_tools(messages: list[dict], tools: list[dict],
                    temperature: float = 0.2) -> AssistantReply | None:
-    """One agent step. Returns None when the LLM is off or unreachable, so
-    the agent can degrade to a clear message instead of an exception."""
+    """One agent step. Returns None when the LLM is off or unreachable."""
     if not available():
         return None
     try:
         r = _create(messages, tools=tools, temperature=temperature)
-        msg = r.choices[0].message
+        msg_content = r.output_text or ""
+        calls: list[ToolCall] = []
+        for step in (r.steps or []):
+            if step.type == "function_call":
+                calls.append(ToolCall(
+                    id=step.id,
+                    name=step.name,
+                    arguments=step.arguments or {},
+                ))
+        return AssistantReply(content=msg_content, tool_calls=calls)
     except Exception as e:  # noqa: BLE001
         log.warning("agent step failed: %s", e)
         return None
-    calls: list[ToolCall] = []
-    for tc in (getattr(msg, "tool_calls", None) or []):
-        raw = tc.function.arguments or "{}"
-        try:
-            args = json.loads(raw)
-        except json.JSONDecodeError:
-            args = {"_raw": raw}
-        calls.append(ToolCall(id=tc.id or f"call_{len(calls)}",
-                              name=tc.function.name, arguments=args))
-    return AssistantReply(content=msg.content, tool_calls=calls)
 
 
 def test_provider() -> dict:
-    """Connectivity check for `jobpipe llm-test`. Sends a tiny ping;
-    never prints the key."""
+    """Connectivity check for `jobpipe llm-test`."""
     out = {"provider": LLM_PROVIDER, "base_url": LLM_BASE_URL, "model": LLM_MODEL,
            "api_key": "set" if LLM_API_KEY not in ("", "ollama") else "not set (local ok)",
            "ok": False}
@@ -203,10 +321,19 @@ def test_provider() -> dict:
     try:
         r = _create([{"role": "user", "content": "Reply with exactly: pong"}],
                     max_tokens=20, temperature=0)
-        out["reply"] = (r.choices[0].message.content or "").strip()[:80]
+        out["reply"] = (r.output_text or "").strip()[:80]
         out["ok"] = True
     except Exception as e:  # noqa: BLE001
         out["error"] = str(e)[:300]
     out["latency_ms"] = int((time.time() - t0) * 1000)
     return out
 
+
+def rate_limit_status() -> dict:
+    """Return current rate limit info for `jobpipe stats` or CLI display."""
+    return {
+        "remaining": _rl_remaining,
+        "limit": _rl_limit,
+        "reset_at": _rl_reset_at,
+        "reset_ctime": time.ctime(_rl_reset_at) if _rl_reset_at else None,
+    }

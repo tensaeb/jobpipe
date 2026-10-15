@@ -91,11 +91,15 @@ Copy `.env.example` → `.env`. Everything is optional; the pipeline runs with n
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_PROVIDER` | `gemini` | `gemini`, `groq`, `openrouter`, `cerebras`, `mistral`, `ollama`, `openai`, `deepseek`, `custom` |
-| `LLM_BASE_URL` | provider's | Override — any OpenAI-compatible endpoint |
-| `LLM_MODEL` | provider's | Override — model name |
-| `LLM_API_KEY` | provider's env var | e.g. `GEMINI_API_KEY`; local Ollama needs none |
+| `LLM_PROVIDER` | `gemini` | `gemini` (Google Interactions API) |
+| `LLM_BASE_URL` | provider's | Override — Google Generative Language API base URL |
+| `LLM_MODEL` | `gemini-3.8-flash` | Override — model name |
+| `LLM_API_KEY` | provider's env var | e.g. `GEMINI_API_KEY` |
 | `LLM_ENABLED` | `auto` | `auto` (probe once, fall back to regex), `on`, `off` |
+| `LLM_RATE_LIMIT_THRESHOLD` | `0.75` | Notify via Telegram when this fraction of requests is used |
+| `LLM_RATE_LIMIT_WINDOW` | `300` | Seconds between rate-limit notifications |
+| `LLM_MAX_RETRIES` | `3` | Max retries on HTTP 429 (rate limited) |
+| `LLM_BACKOFF_BASE` | `2.0` | Base backoff seconds (exponential: base * 2^attempt) |
 | `AGENT_MAX_TURNS` | `12` | Bound on the agent's tool loop |
 | `ALERT_MIN_SCORE` | `40` | Minimum score for Telegram alerts |
 | `DEDUP_FUZZ` | `92` | RapidFuzz threshold; lower = more aggressive dedup |

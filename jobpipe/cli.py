@@ -223,6 +223,16 @@ def cmd_stats(args, con):
         regex_jobs = total_jobs - llm_jobs
         print(f"extraction: regex={regex_jobs}  regex+llm={llm_jobs}"
               f"  ({llm_jobs/total_jobs*100:.0f}% LLM-assisted)")
+
+    # LLM rate limit status.
+    from . import llm as _llm
+    rl = _llm.rate_limit_status()
+    if rl["limit"] is not None:
+        used = rl["limit"] - rl["remaining"] if rl["remaining"] is not None else "?"
+        print(f"LLM rate limit: {used}/{rl['limit']} used"
+              f"  (reset {rl['reset_ctime'] or 'unknown'})")
+    elif rl["remaining"] is not None:
+        print(f"LLM rate limit: {rl['remaining']} remaining (limit unknown)")
     rows = con.execute(
         "SELECT follow_up_due, job_id FROM applications WHERE sent_at IS NOT NULL"
         " AND response_status IS NULL AND follow_up_due <= date('now')"
