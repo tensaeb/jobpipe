@@ -12,6 +12,6 @@ COPY profile.example.yaml selftest.py ./
 VOLUME ["/app/data", "/app/outbox", "/app/cv"]
 USER jobpipe
 HEALTHCHECK --interval=30m --timeout=10s --start-period=5m --retries=3 \
-    CMD python -c "import sqlite3; sqlite3.connect('/app/data/jobpipe.db')" || exit 1
+    CMD python -c "import time,pathlib; hf=pathlib.Path('/app/data/watcher_heartbeat'); t=float(hf.read_text()) if hf.exists() else 0; exit(0 if time.time()-t<1800 else 1)" || exit 1
 ENTRYPOINT ["tini", "--", "python", "-m", "jobpipe"]
 CMD ["watch"]

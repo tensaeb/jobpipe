@@ -7,7 +7,7 @@ import yaml
 
 from .config import PROFILE
 from .extract import injection_signals
-from .matcher import Job, Match, Matcher, cv_variant
+from .matcher import BUCKET_APPLY, BUCKET_REVIEW, Job, Match, Matcher, cv_variant
 from .models import ParsedJob
 
 _matcher: Matcher | None = None
@@ -160,11 +160,11 @@ def score(parsed: ParsedJob, job_id: str = "?", raw_text: str = "") -> tuple[Mat
     # Preserve APPLY (HOLD) when blocking conflicts exist.
     if m.blockers:
         m.bucket = "SKIP"
-    elif m.score >= 65:
+    elif m.score >= BUCKET_APPLY:
         m.bucket = "APPLY (HOLD)" if any(
             f.startswith("BLOCKED:") for f in m.flags
         ) else "APPLY"
-    elif m.score >= 40:
+    elif m.score >= BUCKET_REVIEW:
         m.bucket = "REVIEW"
     else:
         m.bucket = "SKIP"

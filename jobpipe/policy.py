@@ -131,28 +131,33 @@ def check(con, job_id: int, *, manual: bool = False) -> tuple[list[str], dict]:
     # write_body() appends [YOUR ANSWER: ...] markers when a post requests
     # salary, notice period, GitHub, etc. Transmitting these to recruiters
     # would be embarrassing — block until the user fills them in the .eml.
-    # Check both the stored DB body and the .eml file on disk independently;
-    # if EITHER still has unfilled placeholders, block the send.
+    # If the .eml file exists on disk it is authoritative: check only it.
+    # Otherwise fall back to the stored DB body.
     placeholder_blocked = False
     if app is not None:
-        db_body = app["email_body"] or ""
-        if "[YOUR ANSWER:" in db_body:
-            placeholder_blocked = True
-
-        # Also check the .eml file on disk (the user may have edited it).
         eml_path = app["eml_path"]
         if eml_path:
-            try:
-                from email import policy as _email_policy
-                from email.parser import BytesParser
-                p = Path(eml_path)
-                if p.exists():
+            p = Path(eml_path)
+            if p.exists():
+                try:
+                    from email import policy as _email_policy
+                    from email.parser import BytesParser
                     _msg = BytesParser(policy=_email_policy.default).parse(p.open("rb"))
-                    eml_body = _msg.get_content() or ""
+                    _part = _msg.get_body(preferencelist=("plain",))
+                    eml_body = _part.get_content() if _part else ""
                     if "[YOUR ANSWER:" in eml_body:
                         placeholder_blocked = True
-            except Exception:  # noqa: BLE001
-                pass
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                # File missing — fall back to the stored DB body.
+                db_body = app["email_body"] or ""
+                if "[YOUR ANSWER:" in db_body:
+                    placeholder_blocked = True
+        else:
+            db_body = app["email_body"] or ""
+            if "[YOUR ANSWER:" in db_body:
+                placeholder_blocked = True
 
     if placeholder_blocked:
         reasons.append(

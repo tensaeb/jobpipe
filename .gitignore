@@ -10,8 +10,7 @@ cv/
 uploads/
 
 # Runtime state (local data, generated mail)
-data/*.db
-data/*.db-*
+data/
 outbox/
 
 # Python

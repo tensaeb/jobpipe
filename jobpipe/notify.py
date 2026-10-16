@@ -76,6 +76,7 @@ def _esc(s) -> str:
 
 
 OFFSET_FILE = Path(__file__).resolve().parent.parent / "data" / "bot_offset.json"
+HEARTBEAT_FILE = Path(__file__).resolve().parent.parent / "data" / "watcher_heartbeat"
 
 
 def _load_offset() -> int:
@@ -172,12 +173,18 @@ def send_with_buttons(job_id: int, text: str) -> bool:
         return send(text)
 
 
-def _bot_api(path: str, payload: dict) -> dict | None:
-    """Helper: POST to the Bot API and return the parsed JSON response."""
+def _bot_api(path: str, payload: dict, timeout: int = 30) -> dict | None:
+    """Helper: POST to the Bot API and return the parsed JSON response.
+
+    `timeout` is the urlopen client timeout. For long-poll getUpdates it must
+    be greater than the Telegram `timeout` parameter (Telegram holds the
+    connection up to that many seconds) — use poll_value + ~10s.
+    """
     data = urllib.parse.urlencode(payload).encode()
     try:
         with urllib.request.urlopen(
-            f"https://api.telegram.org/bot{TG_BOT_TOKEN}/{path}", data=data, timeout=20
+            f"https://api.telegram.org/bot{TG_BOT_TOKEN}/{path}",
+            data=data, timeout=timeout,
         ) as r:
             return json.loads(r.read())
     except Exception as e:  # noqa: BLE001
@@ -306,9 +313,11 @@ def send_bot_command_updates() -> None:
         # Outer guard: any unexpected exception (network, JSON parse, etc.)
         # logs and continues instead of killing the thread permanently.
         try:
-            # getUpdates asks Telegram to hold up to 20s to stay under
-            # urlopen's 20s timeout — avoids idle-poll timeout warnings.
-            resp = _bot_api("getUpdates", {"offset": offset, "timeout": 20, "limit": 10})
+            # getUpdates asks Telegram to hold up to 20s; urlopen client
+            # timeout is 30s (poll value + ~10s) so we never time out before
+            # Telegram releases the connection.
+            resp = _bot_api("getUpdates", {"offset": offset, "timeout": 20, "limit": 10},
+                            timeout=30)
             if resp is None or not resp.get("ok"):
                 time.sleep(5)
                 continue

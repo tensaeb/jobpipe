@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from . import policy, sender
+from .config import AUTO_APPLY
 from .db import connect, ul
 from .pipeline import approve, ingest_post, mark_sent, process_pending, reject
 
@@ -91,7 +92,12 @@ def cmd_approve(args, con):
     for b in res["blocked"]:
         print(f"\n!! {b}")
     print("\n--- body ---\n" + res["body"])
-    if getattr(args, "send", False):
+
+    # Auto-send when AUTO_APPLY=true; --send/--yes are explicit overrides.
+    # --send forces a send attempt regardless of AUTO_APPLY; --yes overrides DRY_RUN.
+    should_send = args.send or AUTO_APPLY
+
+    if should_send:
         print()
         _report(sender.send_one(con, args.id, manual=True,
                                 force_dry=False if args.yes else None))
@@ -99,6 +105,7 @@ def cmd_approve(args, con):
         print("\nOpen the .eml in your mail client, check it, press Send.")
         print(f"Then: jobpipe sent {args.id}")
         print(f"Or let jobpipe send it: jobpipe send {args.id} --yes")
+        print(f"Or enable auto-send: AUTO_APPLY=true in .env")
 
 
 def _report(res):

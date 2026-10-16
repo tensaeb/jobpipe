@@ -16,7 +16,8 @@ from datetime import datetime, timedelta, timezone
 
 from .config import MAX_POST_AGE_DAYS, TG_API_HASH, TG_API_ID, TG_BOT_TOKEN, TG_CHANNELS
 from .db import connect
-from .pipeline import ingest_post, process_post, update_job_score
+from .notify import HEARTBEAT_FILE
+from .pipeline import ingest_post, process_post, reprocess_job, update_job_score
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ async def run(backfill: int = 0):
     if not (TG_API_ID and TG_API_HASH):
         raise SystemExit("Set TELEGRAM_API_ID and TELEGRAM_API_HASH (my.telegram.org)")
 
-    client = TelegramClient("telegram", int(TG_API_ID), TG_API_HASH)
+    client = TelegramClient("data/telegram", int(TG_API_ID), TG_API_HASH)
 
     async def handle(text, chat, msg_id, posted_at):
         global _last_post_time, _daily_count
@@ -82,6 +83,11 @@ async def run(backfill: int = 0):
             log.info("post %s -> job %s", pid, jid)
             _last_post_time = _time.time()
             _daily_count += 1
+            try:
+                HEARTBEAT_FILE.parent.mkdir(parents=True, exist_ok=True)
+                HEARTBEAT_FILE.write_text(str(_last_post_time))
+            except Exception:  # noqa: BLE001
+                pass
         except Exception as exc:
             from . import notify
             notify.send(f"\u26a0 Watcher error on msg {msg_id}: {exc!r}")
@@ -125,31 +131,24 @@ async def run(backfill: int = 0):
             # edited post, not the stale original.
             if abs(match.score - old_score) >= 5:
                 await asyncio.to_thread(
-                    _in_thread, update_job_score, row["id"], match, cv
+                    _in_thread, reprocess_job, row["id"], text
                 )
-                # Re-run the full post processing so body/skills/recipient
-                # reflect the edit, then re-alert with the latest data.
-                await asyncio.to_thread(_in_thread, process_post, row["id"])
                 from . import notify
                 # Re-fetch the updated row for the alert.
-                updated_row = await asyncio.to_thread(
-                    _in_thread, _get_existing_job, f"telegram:{src}", str(msg_id)
+                r = await asyncio.to_thread(
+                    _in_thread, lambda c: c.execute(
+                        "SELECT * FROM jobs WHERE id=?", (row["id"],)
+                    ).fetchone()
                 )
-                if updated_row:
-                    jid = updated_row["id"]
-                    r = await asyncio.to_thread(
-                        _in_thread, lambda c: c.execute(
-                            "SELECT * FROM jobs WHERE id=?", (jid,)
-                        ).fetchone()
-                    )
+                if r:
                     await asyncio.to_thread(
                         notify.send_with_buttons,
-                        jid,
+                        row["id"],
                         (
                             f"\u270f\ufe0f <b>Edited post</b> \u2014 score changed "
                             f"{old_score} \u2192 {r['score']}\n"
                             + notify.format_alert(
-                                jid, match, parsed, cv, None,
+                                row["id"], match, parsed, cv, None,
                                 include_commands=False,
                             )
                         ),
@@ -158,7 +157,7 @@ async def run(backfill: int = 0):
             log.exception("edited-message handler failed")
 
     async def heartbeat():
-        """Send a keep-alive ping every 30 minutes."""
+        """Send a keep-alive ping every 30 minutes and touch the heartbeat file."""
         from . import notify
         while True:
             await asyncio.sleep(1800)
@@ -166,6 +165,11 @@ async def run(backfill: int = 0):
                 int((_time.time() - _last_post_time) / 60)
                 if _last_post_time else "?"
             )
+            try:
+                HEARTBEAT_FILE.parent.mkdir(parents=True, exist_ok=True)
+                HEARTBEAT_FILE.write_text(str(_time.time()))
+            except Exception:  # noqa: BLE001
+                pass
             notify.send(
                 f"\u2705 Watcher alive | last post: {mins} mins ago"
                 f" | processed this session: {_daily_count}"

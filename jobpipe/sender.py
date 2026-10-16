@@ -89,7 +89,8 @@ def _read_eml_body(eml_path: str | None, fallback_body: str) -> str:
         if not p.exists():
             return fallback_body
         msg = BytesParser(policy=email_policy.default).parse(p.open("rb"))
-        body = msg.get_content()
+        part = msg.get_body(preferencelist=("plain",))
+        body = part.get_content() if part else ""
         if body and body.strip():
             return body
     except Exception:  # noqa: BLE001

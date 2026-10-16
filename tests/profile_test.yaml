@@ -1,0 +1,101 @@
+# ---------------------------------------------------------------------------
+# profile_test.yaml — test fixture for selftest.py
+# Copy of profile.example.yaml with BETA_DATES conflict resolved so the
+# "conflict resolved" assertions pass on a fresh clone.
+# ---------------------------------------------------------------------------
+candidate:
+  name: "Test User"
+  title: "Software Engineer"
+  location: "Addis Ababa, Ethiopia"
+  phone: ""
+  email: ""
+  portfolio: ""
+  github: ""
+  linkedin: ""
+
+education:
+  - degree: "BSc Software Engineering"
+    institution: "Addis Ababa University"
+    completed: "2021-10"
+
+experience:
+  total_months_employed: 50
+  years_claimed_on_cv: "4+"
+  first_role_start: "2021-10"
+  last_role_end: null
+  currently_employed: true
+  months_since_last_role: null
+
+roles:
+  - id: CTO_NODELALA
+    company: "Nodelala PLC"
+    title: "Chief Technology Officer"
+    start: "2024-09"
+    end: null
+    evidence:
+      CTO_01: "Directed technical strategy and architectural planning."
+      CTO_02: "Managed and mentored the developer team."
+
+  - id: BETA
+    company: "Beta Tech Hub"
+    title: "Software Engineer & Team Leader"
+    start: "2024-09"
+    end: "2025-12"
+    disputed: false
+    evidence:
+      BETA_01: "Led end-to-end delivery of a Property Management System."
+      BETA_02: "Coordinated sprint planning and task allocation."
+      BETA_03: "Built and supported e-commerce platforms."
+
+  - id: LINE
+    company: "Line Addis Consultancy"
+    title: "Full-Stack Engineer"
+    start: "2022-08"
+    end: "2023-08"
+    evidence:
+      LINE_01: "Helped build Sek'ela SIMS."
+      LINE_02: "Applied UI/UX designs across the product."
+      LINE_03: "Wrote unit and functional tests."
+
+skills:
+  Python:    { tier: named, evidence: [LINE_01, CTO_01] }
+  JavaScript: { tier: named, evidence: [LINE_01] }
+  SQL:       { tier: named, evidence: [LINE_01] }
+  HTML:      { tier: listed }
+  CSS:       { tier: listed }
+  TypeScript: { tier: listed }
+  React:     { tier: listed }
+  "Next.js": { tier: listed }
+  Node.js:   { tier: listed }
+  PostgreSQL: { tier: listed }
+  React Native: { tier: listed }
+  Flutter:   { tier: listed }
+  Angular:   { tier: listed }
+
+projects:
+  - name: "Sek'ela SIMS"
+    role: "Full-Stack Engineer"
+
+absent:
+  - Svelte
+  - Vue
+  - Kubernetes
+  - Jenkins
+  - Terraform
+  - Go
+  - Rust
+  - PHP
+
+conflicts:
+  BETA_DATES:
+    severity: info
+    field: "Beta Tech Hub employment dates"
+    cv_says: "2024-09 to 2025-12"
+    note: "Resolved for test fixture — dates verified as non-overlapping."
+    action: none
+
+preferences:
+  minimum_salary: null
+  work_modes: [Remote, Hybrid]
+  employment_types: [Full-time, Contract, Freelance]
+  timezone: "Africa/Addis_Ababa"

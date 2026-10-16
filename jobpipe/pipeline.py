@@ -127,6 +127,102 @@ def process_post(con, post_id: int, alert: bool = True) -> int | None:
     return job_id
 
 
+def reprocess_job(con, job_id: int, new_body: str, alert: bool = True) -> int | None:
+    """Re-extract and re-score a job after its post body has been edited.
+
+    Updates the stored post body, re-runs extraction and scoring, and
+    refreshes the jobs row so that a subsequent approve() builds materials
+    from the edited post rather than the stale original.
+
+    Returns job_id or None if the job doesn't exist.
+    """
+    row = con.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+    if row is None:
+        return None
+
+    post_id = row["post_id"]
+    post = con.execute("SELECT * FROM posts WHERE id=?", (post_id,)).fetchone()
+    if post is None:
+        return None
+
+    # Update the stored post body with the edited version.
+    con.execute(
+        "UPDATE posts SET body=?, body_hash=? WHERE id=?",
+        (new_body, body_hash(new_body), post_id),
+    )
+
+    # Re-extract from the edited body.
+    parsed, method = extract(new_body)
+
+    # A post with no contact route and no title is channel chatter, not a job.
+    if not parsed.title and not (parsed.application_email or parsed.application_telegram):
+        return None
+
+    match, cv = score(parsed, job_id=str(job_id), raw_text=new_body)
+
+    # Preserve existing status unless the new score changes the bucket.
+    old_status = row["status"]
+
+    # Recompute fingerprint for dedup (against other jobs, not self).
+    fp = metadata_fingerprint(parsed.company, parsed.title, parsed.location, parsed.application_url)
+    dupe_of = None
+    if fp:
+        dup_row = con.execute(
+            "SELECT id FROM jobs WHERE fingerprint=? AND id != ? ORDER BY id LIMIT 1",
+            (fp, job_id),
+        ).fetchone()
+        if dup_row:
+            dupe_of = dup_row["id"]
+            match.flags.append(f"DUPLICATE_OF_JOB_{dupe_of}")
+
+    quarantined = any(f.startswith("QUARANTINED") for f in match.flags)
+    ambiguous = any(f.startswith("MULTIPLE_CONTACTS") for f in match.flags)
+    recipient = None if (quarantined or ambiguous) else parsed.application_email
+
+    if quarantined:
+        status = "QUARANTINED"
+    elif dupe_of:
+        status = "DUPLICATE"
+    elif match.bucket == "SKIP":
+        status = "SKIPPED"
+    else:
+        status = "NEW" if old_status == "NEW" else old_status
+
+    con.execute(
+        """UPDATE jobs SET
+            title=?, company=?, location=?, remote=?, employment_type=?, min_years=?,
+            required_json=?, preferred_json=?, salary_raw=?, application_email=?,
+            application_telegram=?, application_url=?, deadline_text=?, urgency=?,
+            materials_json=?, extracted_by=?, score=?, bucket=?, evidence_depth=?,
+            flags_json=?, blockers_json=?, cv_variant=?, fingerprint=?, duplicate_of=?,
+            status=?, subject_instruction=?
+          WHERE id=?""",
+        (
+            parsed.title, parsed.company, parsed.location,
+            int(parsed.remote) if parsed.remote is not None else None,
+            parsed.employment_type, parsed.min_years,
+            jl(parsed.required_skills), jl(parsed.preferred_skills),
+            parsed.salary_raw, recipient,
+            parsed.application_telegram, parsed.application_url,
+            parsed.deadline_text, parsed.urgency,
+            jl(parsed.required_materials), method,
+            match.score, match.bucket, round(match.evidence_depth, 3),
+            jl(match.flags), jl(match.blockers), cv, fp, dupe_of,
+            status, parsed.subject_instruction,
+            job_id,
+        ),
+    )
+    con.commit()
+
+    if alert and status == "NEW":
+        from . import notify
+        notify.send_with_buttons(job_id, notify.format_alert(
+            job_id, match, parsed, cv, post["url"], include_commands=False
+        ))
+
+    return job_id
+
+
 def process_pending(con, alert: bool = True) -> list[int]:
     rows = con.execute(
         "SELECT p.id FROM posts p LEFT JOIN jobs j ON j.post_id = p.id"

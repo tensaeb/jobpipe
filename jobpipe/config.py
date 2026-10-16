@@ -60,7 +60,7 @@ def resolve_llm(environ: dict | None = None) -> dict:
     """Pure settings resolution: provider preset <- environment overrides.
     Takes a mapping so tests can exercise precedence without touching env."""
     env = os.environ if environ is None else environ
-    provider = (env.get("LLM_PROVIDER") or "ollama").strip().lower()
+    provider = (env.get("LLM_PROVIDER") or "gemini").strip().lower()
     preset = LLM_PROVIDERS.get(provider, LLM_PROVIDERS["custom"])
     base_url = env.get("LLM_BASE_URL") or preset["base_url"] or "http://localhost:11434/v1"
     model = env.get("LLM_MODEL") or preset["model"] or "qwen3:8b"

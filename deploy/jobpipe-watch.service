@@ -15,7 +15,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/opt/jobpipe/data /opt/jobpipe/outbox /opt/jobpipe/telegram.session
+ReadWritePaths=/opt/jobpipe/data /opt/jobpipe/outbox
 
 [Install]
 WantedBy=multi-user.target

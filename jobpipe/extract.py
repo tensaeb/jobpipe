@@ -282,8 +282,8 @@ def regex_extract(text: str) -> ParsedJob:
 
     subject_instr = None
     sm2 = _SUBJ_RE.search(text)
-    if sm2:
-        subject_instr = sm2.group(1).strip()
+    if sm2 and sm2.group(1):
+        subject_instr = sm2.group(1).strip().strip("'\"")
 
     skills = find_skills(text)
     required, preferred = _split_required_preferred(text, skills)

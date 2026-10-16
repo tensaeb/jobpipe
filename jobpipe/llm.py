@@ -1,14 +1,25 @@
 """Pluggable LLM access — Google Gemini via the Interactions API.
 
-Uses the new google-genai SDK with `client.interactions.create()`.
+Uses the google-genai SDK with `client.interactions.create()`.
 Default model: gemini-3.8-flash. Falls back to regex-only if the provider
 is unreachable. Tracks rate limit usage and notifies via Telegram when
 approaching thresholds.
+
+IMPORTANT: Only the Gemini provider is supported. OpenAI-compatible endpoints
+(ollama, groq, openrouter, …) are no longer served by this module. The
+Interactions API is experimental (Beta) — see Google AI Studio docs.
+
+The system prompt is passed as the top-level `system_instruction` parameter
+(never folded into untrusted job text). Temperature and max_output_tokens are
+passed via `generation_config`. JSON mode uses `response_mime_type` +
+`response_format` as top-level parameters (never `extra_body`, which the
+SDK may silently drop on retry).
 """
 from __future__ import annotations
 
 import json
 import logging
+import re as _re
 import time
 from dataclasses import dataclass, field
 
@@ -35,6 +46,8 @@ _PROBE_TTL_SECONDS = 300  # re-probe every 5 minutes
 
 # --- rate limit tracking ---------------------------------------------------
 # Module-level counters shared across all calls in this process.
+# NOTE: in-process counters are empty in a separate CLI process; the header
+# values below are best-effort (the SDK may not expose them).
 _rl_remaining: int | None = None   # requests remaining in current window
 _rl_limit: int | None = None       # total requests allowed per window
 _rl_reset_at: float | None = None  # unix timestamp when window resets
@@ -60,7 +73,11 @@ def _get_client():
     if _client is None:
         from google import genai
 
-        _client = genai.Client(api_key=LLM_API_KEY or None)
+        http_options = {}
+        if LLM_BASE_URL:
+            http_options["base_url"] = LLM_BASE_URL
+        _client = genai.Client(api_key=LLM_API_KEY or None,
+                               http_options=http_options or None)
     return _client
 
 
@@ -139,36 +156,50 @@ def _extract_rate_limit_headers(response) -> tuple[int | None, int | None, float
 def _create(messages, *, tools=None, temperature=0, max_tokens=None, json_mode=False):
     """Call the Gemini Interactions API with rate limit handling.
 
+    `system_instruction` is passed as a top-level parameter (not folded into
+    the input text). `temperature` and `max_output_tokens` go through
+    `generation_config`. JSON mode uses `response_mime_type` as a top-level
+    parameter.
+
     Retries with exponential backoff on 429 (rate limited) responses.
     Notifies via Telegram when remaining requests drop below the configured
     threshold.
     """
-    import httpx
+    from google.genai import types
 
+    # Split system instruction from the rest so it is never mixed with
+    # untrusted user/job text.
+    system_instruction = None
     parts = []
     for m in messages:
         role = m.get("role", "user")
         content = m.get("content", "")
         if role == "system":
-            parts.append(f"System instruction: {content}")
+            system_instruction = content
         else:
             parts.append(content)
     input_text = "\n\n".join(parts)
+
+    # Generation config.
+    gc_kwargs = {}
+    if temperature is not None:
+        gc_kwargs["temperature"] = temperature
+    if max_tokens is not None:
+        gc_kwargs["max_output_tokens"] = max_tokens
+    generation_config = types.GenerationConfig(**gc_kwargs) if gc_kwargs else None
 
     kwargs: dict = {
         "model": LLM_MODEL,
         "input": input_text,
     }
+    if system_instruction:
+        kwargs["system_instruction"] = system_instruction
+    if generation_config:
+        kwargs["generation_config"] = generation_config
     if tools:
         kwargs["tools"] = tools
-    extra: dict = {}
     if json_mode:
-        extra["response_format"] = {
-            "type": "text",
-            "mime_type": "application/json",
-        }
-    if extra:
-        kwargs["extra_body"] = extra
+        kwargs["response_mime_type"] = "application/json"
 
     last_exc = None
     for attempt in range(LLM_MAX_RETRIES):
@@ -186,7 +217,6 @@ def _create(messages, *, tools=None, temperature=0, max_tokens=None, json_mode=F
                 # Try to extract retry-after from error message or headers.
                 retry_after = None
                 msg = str(e)
-                import re as _re
                 m = _re.search(r"retry.?after.?[:\s]+(\d+)", msg, _re.I)
                 if m:
                     retry_after = int(m.group(1))
@@ -214,26 +244,32 @@ def _create(messages, *, tools=None, temperature=0, max_tokens=None, json_mode=F
 
 
 def _robust_create(messages, **kw):
-    """Retry once without optional params if the provider rejects them."""
-    emitted = set(kw.keys())
+    """Create with one controlled fallback.
+
+    If JSON mode (response_mime_type) is rejected by the provider, retry as
+    plain text instead of silently dropping structured output. Other optional
+    parameters are not silently dropped — a failure propagates.
+    """
     try:
         return _create(messages, **kw)
     except Exception as e:  # noqa: BLE001
-        # Optional params live in extra_body; check if any were sent.
-        extra = kw.get("extra_body", {})
-        sent_optional = bool(extra)
-        if not sent_optional:
-            raise
-        retry_kw = {k: v for k, v in kw.items() if k != "extra_body"}
-        log.debug(
-            "strict call failed (%s); retrying without optional params %s",
-            e, sorted(extra.keys()),
-        )
-        return _create(messages, **retry_kw)
+        if kw.get("response_mime_type") == "application/json":
+            log.warning(
+                "JSON mode rejected (%s); retrying as plain text — structured "
+                "output may be lost", e,
+            )
+            kw2 = {k: v for k, v in kw.items() if k != "response_mime_type"}
+            return _create(messages, **kw2)
+        raise
 
 
 def available() -> bool:
-    """True if an LLM is reachable. Cached with a 5-minute TTL."""
+    """True if an LLM is reachable. Cached with a 5-minute TTL.
+
+    Uses `count_tokens` (a cheap metadata call) instead of a full generation
+    to avoid spending quota on every probe. Falls back to a minimal
+    generation if the SDK does not expose `count_tokens`.
+    """
     global _probe_result, _probe_time
     if LLM_ENABLED == "off":
         return False
@@ -242,7 +278,18 @@ def available() -> bool:
             and now_ts - _probe_time < _PROBE_TTL_SECONDS:
         return _probe_result
     try:
-        r = _create([{"role": "user", "content": "ping"}], max_tokens=5, temperature=0)
+        client = _get_client()
+        from google.genai import types
+        try:
+            # Cheap metadata call: count tokens, no generation.
+            client.models.count_tokens(model=LLM_MODEL, contents="ping")
+        except (AttributeError, TypeError):
+            # count_tokens not available; fall back to a 1-token generation.
+            client.interactions.create(
+                model=LLM_MODEL,
+                input="ping",
+                generation_config=types.GenerationConfig(max_output_tokens=1),
+            )
         _probe_result = True
         _probe_time = now_ts
     except Exception as e:  # noqa: BLE001
@@ -292,24 +339,15 @@ def complete_text(system: str, user: str, max_tokens: int = 500) -> str | None:
 
 def complete_tools(messages: list[dict], tools: list[dict],
                    temperature: float = 0.2) -> AssistantReply | None:
-    """One agent step. Returns None when the LLM is off or unreachable."""
-    if not available():
-        return None
-    try:
-        r = _create(messages, tools=tools, temperature=temperature)
-        msg_content = r.output_text or ""
-        calls: list[ToolCall] = []
-        for step in (r.steps or []):
-            if step.type == "function_call":
-                calls.append(ToolCall(
-                    id=step.id,
-                    name=step.name,
-                    arguments=step.arguments or {},
-                ))
-        return AssistantReply(content=msg_content, tool_calls=calls)
-    except Exception as e:  # noqa: BLE001
-        log.warning("agent step failed: %s", e)
-        return None
+    """One agent step — DISABLED pending port to Interactions tool format.
+
+    Tool definitions are still in OpenAI format, but the Interactions API
+    expects `types.Tool` with `function_declarations`, and multi-turn
+    tool/result messages are not yet supported. Return None so callers
+    degrade gracefully instead of behaving unpredictably.
+    """
+    log.warning("agent disabled: complete_tools not ported to Interactions API")
+    return None
 
 
 def test_provider() -> dict:
