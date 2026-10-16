@@ -100,6 +100,7 @@ def _b(name, default="false"):
 
 
 AUTO_APPLY = _b("AUTO_APPLY")                    # master switch, OFF by default
+AUTO_SEND = _b("AUTO_SEND") or AUTO_APPLY        # auto-deliver via SMTP right after a Telegram /approve
 DRY_RUN = _b("DRY_RUN", "true")                  # simulate sends unless disabled
 AUTO_APPLY_MIN_SCORE = int(os.getenv("AUTO_APPLY_MIN_SCORE", "70"))
 DAILY_SEND_LIMIT = int(os.getenv("DAILY_SEND_LIMIT", "10"))

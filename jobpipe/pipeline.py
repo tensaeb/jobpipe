@@ -321,6 +321,10 @@ def approve(con, job_id: int, actor: str = "user") -> dict:
     hard_blocks = [f for f in ul(row["flags_json"]) if f.startswith("BLOCKED:")]
     body = compose.write_body(match, post["body"],
                               required_materials=ul(row["materials_json"]))
+    # Auto-fill placeholders from profile.yaml (GitHub, Portfolio, etc.) so the
+    # email can proceed to send without manual editing. Truly missing data
+    # (salary when unset, notice period, intro video) stays as a placeholder.
+    body = compose.fill_profile_placeholders(body)
     subject = compose.subject_for(match, subject_instr)
     eml = compose.build_eml(job_id, match, body, row["application_email"],
                             row["cv_variant"], subject_instruction=subject_instr)

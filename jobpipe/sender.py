@@ -98,9 +98,17 @@ def _read_eml_body(eml_path: str | None, fallback_body: str) -> str:
     return fallback_body
 
 
-def send_one(con, job_id: int, *, manual: bool = False, force_dry: bool | None = None) -> dict:
+def send_one(
+    con, job_id: int, *, manual: bool = False, force_dry: bool | None = None,
+    notify: bool = True,
+) -> dict:
     """Send one approved application. Returns a result dict; never raises on
-    a policy block (that's a normal outcome), only on transport failure."""
+    a policy block (that's a normal outcome), only on transport failure.
+
+    `notify` controls whether send_one itself posts a Telegram delivery
+    confirmation. The Telegram approve path sets it to False and reports the
+    outcome itself (so there is no duplicate message).
+    """
     reasons, ctx = policy.check(con, job_id, manual=manual)
     if reasons:
         return {"job_id": job_id, "sent": False, "blocked": reasons}
@@ -152,12 +160,13 @@ def send_one(con, job_id: int, *, manual: bool = False, force_dry: bool | None =
     con.commit()
 
     log.info("sent job %s to %s", job_id, job["application_email"])
-    notify.send(
-        f"\u2709\ufe0f Application sent\n<b>{_e(job['title'])}</b>"
-        f"{' @ ' + _e(job['company']) if job['company'] else ''}\n"
-        f"To: <code>{_e(job['application_email'])}</code>\n"
-        f"CV: {app['cv_variant']}\nFollow-up due: {app['follow_up_due']}"
-    )
+    if notify:
+        notify.send(
+            f"\u2709\ufe0f Application sent\n<b>{_e(job['title'])}</b>"
+            f"{' @ ' + _e(job['company']) if job['company'] else ''}\n"
+            f"To: <code>{_e(job['application_email'])}</code>\n"
+            f"CV: {app['cv_variant']}\nFollow-up due: {app['follow_up_due']}"
+        )
 
     return {
         "job_id": job_id, "sent": True, "to": job["application_email"],

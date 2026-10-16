@@ -111,18 +111,19 @@ def _authorized(update: dict) -> bool:
         return False
 
 
-def send(text: str) -> bool:
+def send(text: str, reply_markup: dict | None = None) -> bool:
     if not (TG_BOT_TOKEN and TG_ALERT_CHAT_ID):
         log.info("notify: bot not configured, printing instead\n%s", text)
         return False
-    data = urllib.parse.urlencode(
-        {
-            "chat_id": TG_ALERT_CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": "true",
-        }
-    ).encode()
+    payload = {
+        "chat_id": TG_ALERT_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": "true",
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = json.dumps(reply_markup)
+    data = urllib.parse.urlencode(payload).encode()
     try:
         with urllib.request.urlopen(
             f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage", data=data, timeout=20
@@ -287,6 +288,110 @@ def _bot_approve(con, job_id: int) -> dict:
     return _pipeline_approve(con, job_id, actor="bot")
 
 
+def _send_readable_email(con, res: dict) -> None:
+    """Send a human-readable .txt copy of the email to Telegram.
+
+    Telegram cannot render .eml files inside the app, so alongside the .eml
+    (kept for opening in a desktop mail client) we also send a plain-text
+    version with To / Subject / Body that you can read directly in Telegram.
+    """
+    from .config import OUTBOX
+
+    import re
+
+    job_id = res["job_id"]
+    to = res.get("to") or "(none)"
+    subject = res.get("subject") or "(no subject)"
+    body = res.get("body") or ""
+
+    slug = re.sub(r"[^a-z0-9]+", "-", str(to or "job").lower()).strip("-")[:40]
+    OUTBOX.mkdir(parents=True, exist_ok=True)
+    txt_path = OUTBOX / f"{job_id:04d}-{slug}.txt"
+
+    content = (
+        f"To: {to}\n"
+        f"Subject: {subject}\n"
+        f"\n"
+        f"{body}\n"
+    )
+    txt_path.write_text(content, encoding="utf-8")
+
+    _send_document(
+        TG_ALERT_CHAT_ID,
+        str(txt_path),
+        f"📄 Job {job_id} — email content (readable in Telegram)",
+    )
+
+
+def _auto_send_after_approve(con, job_id: int) -> None:
+    """If AUTO_SEND is on, handle delivery of the just-approved application.
+
+    When DRY_RUN is true: send the .eml (already done by the caller) and then
+    prompt with inline <b>Send</b> / <b>Cancel</b> buttons on Telegram so the
+    user can explicitly deliver or skip. Nothing is sent until "Send" is pressed.
+
+    When DRY_RUN is false: deliver via SMTP immediately and report the outcome
+    on stdout (cmd) and back to Telegram.
+
+    `manual=True` because an explicit Telegram approve already satisfies the
+    human-in-the-loop requirement: only the AUTO_APPLY switch and score floor
+    are relaxed — every safety gate still applies (placeholders, CV, daily
+    limit, blocked domains, idempotency, quarantine/rejected/duplicate).
+    """
+    from .config import AUTO_SEND, DRY_RUN
+    from .sender import send_one
+
+    if not AUTO_SEND:
+        return
+
+    # --- dry run: ask the user on Telegram before actually sending ---------
+    if DRY_RUN:
+        reply_markup = {
+            "inline_keyboard": [[
+                {"text": "✉️ Send", "callback_data": f"send:{job_id}"},
+                {"text": "❌ Cancel", "callback_data": f"cancel:{job_id}"},
+            ]]
+        }
+        msg = (
+            f"⏳ <b>Job {job_id} ready to send</b>\n"
+            "Dry run is on — click <b>Send</b> to deliver via email now, or "
+            "<b>Cancel</b> to skip."
+        )
+        print(f"job {job_id}: DRY RUN — awaiting Send/Cancel on Telegram")
+        log.info("job %s: dry run awaiting Send/Cancel", job_id)
+        send(msg, reply_markup=reply_markup)
+        return
+
+    # --- dry run off: actually deliver and report ---------------------------
+    try:
+        res = send_one(con, job_id, manual=True, notify=False)
+    except Exception as exc:  # transport failure — SMTP down, auth error, etc.
+        msg = f"job {job_id}: AUTO-SEND FAILED — {exc}"
+        print(msg)
+        log.warning(msg)
+        send(f"⚠️ <b>Auto-send failed</b>\nJob {job_id}: {_esc(str(exc))[:300]}")
+        return
+
+    to = res.get("to") or "(none)"
+    subject = res.get("subject") or ""
+    if res.get("sent"):
+        msg = f"job {job_id}: SENT to {to} — {subject}"
+        print(msg)
+        log.info(msg)
+        send(
+            f"✉️ <b>Application sent</b>\n"
+            f"Job {job_id}: {_esc(str(subject))}\n"
+            f"To: <code>{_esc(str(to))}</code>"
+        )
+    else:
+        reasons = res.get("blocked") or []
+        detail = "; ".join(reasons) or "policy blocked"
+        msg = f"job {job_id}: NOT SENT — {detail}"
+        print(msg)
+        log.warning(msg)
+        send(f"⚠️ <b>Auto-send blocked</b>\nJob {job_id}: {_esc(detail)}")
+
+
 def send_bot_command_updates() -> None:
     """Polling loop: processes getUpdates and handles button presses and
     /approve N, /reject N, /info N commands. Runs blocking; call via
@@ -353,8 +458,10 @@ def send_bot_command_updates() -> None:
                             caption = f"\u2705 Approved job {job_id} — materials ready"
                             if res.get("eml"):
                                 _send_document(TG_ALERT_CHAT_ID, res["eml"], caption)
+                                _send_readable_email(con, res)
                             else:
                                 send(caption)
+                            _auto_send_after_approve(con, job_id)
                         except (ValueError, KeyError, TypeError) as e:
                             _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
                                                              "text": str(e)[:200]})
@@ -378,6 +485,34 @@ def send_bot_command_updates() -> None:
                             info_text = f"Job {job_id} not found."
                         send(info_text)
 
+                    elif kind == "send":
+                        try:
+                            _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
+                                                             "text": "Sending…"})
+                            res = send_one(con, job_id, manual=True,
+                                           force_dry=False, notify=False)
+                            if res.get("sent"):
+                                send(
+                                    f"✅ <b>Sent</b>\n"
+                                    f"Job {job_id} delivered to "
+                                    f"<code>{_esc(str(res.get('to')))}</code>"
+                                )
+                            elif res.get("blocked"):
+                                detail = "; ".join(res["blocked"])
+                                send(f"⚠️ <b>Blocked</b>\nJob {job_id}: {_esc(detail)}")
+                            else:
+                                send(f"⚠️ <b>Not sent</b>\nJob {job_id}")
+                        except Exception as exc:  # noqa: BLE001
+                            _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
+                                                             "text": str(exc)[:200]})
+                            send(f"⚠️ <b>Send failed</b>\nJob {job_id}: "
+                                 f"{_esc(str(exc))[:300]}")
+
+                    elif kind == "cancel":
+                        _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
+                                                         "text": "Cancelled"})
+                        send(f"⏹️ <b>Cancelled</b>\nJob {job_id} was not sent.")
+
                     else:
                         _bot_api("answerCallbackQuery", {"callback_query_id": cq_id,
                                                          "text": "Unknown button."})
@@ -397,8 +532,10 @@ def send_bot_command_updates() -> None:
                         caption = f"\u2705 Approved job {job_id} — materials ready"
                         if res.get("eml"):
                             _send_document(TG_ALERT_CHAT_ID, res["eml"], caption)
+                            _send_readable_email(con, res)
                         else:
                             send(caption)
+                        _auto_send_after_approve(con, job_id)
                     except (ValueError, KeyError, TypeError) as e:
                         send(f"\u26a0 Approve {job_id} failed: {_esc(str(e))}")
                     continue

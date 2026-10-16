@@ -158,6 +158,47 @@ def write_body(match: Match, job_text: str,
     return body
 
 
+def fill_profile_placeholders(body: str) -> str:
+    """Replace [YOUR ANSWER: ...] placeholders with values from profile.yaml
+    where available. Placeholders with no matching profile value (e.g. salary
+    when minimum_salary is null, notice period, intro video) are left intact
+    so policy.check() can still block on genuinely unfilled data.
+
+    When every placeholder has been resolved, the ``--- FILL IN BEFORE
+    SENDING ---`` block is removed so the email reads cleanly instead of
+    showing bare values under a "fill in" heading.
+    """
+
+    p = yaml.safe_load(open(PROFILE))
+    candidate = p.get("candidate", {})
+    preferences = p.get("preferences", {})
+
+    replacements = {
+        "Expected salary / rate": preferences.get("minimum_salary"),
+        "Notice period / availability": None,
+        "GitHub profile URL": candidate.get("github"),
+        "Link to intro video": None,
+        "Portfolio URL": candidate.get("portfolio"),
+    }
+
+    for placeholder_text, value in replacements.items():
+        if value:
+            body = body.replace(
+                f"[YOUR ANSWER: {placeholder_text}]", str(value)
+            )
+
+    # If nothing is left to fill, drop the fill-in block entirely.
+    if "[YOUR ANSWER:" not in body:
+        body = re.sub(
+            r"\n\s*--- FILL IN BEFORE SENDING ---.*?--- END ---\s*",
+            "",
+            body,
+            flags=re.DOTALL,
+        ).rstrip() + "\n"
+
+    return body
+
+
 def build_eml(job_id: int, match: Match, body: str, to_addr: str | None, cv_variant: str,
               subject_instruction: str | None = None) -> Path:
     msg = EmailMessage()

@@ -105,6 +105,7 @@ Copy `.env.example` → `.env`. Everything is optional; the pipeline runs with n
 | `DEDUP_FUZZ` | `92` | RapidFuzz threshold; lower = more aggressive dedup |
 | `MAX_POST_AGE_DAYS` | `21` | Backfill age cutoff |
 | `AUTO_APPLY` | `false` | Master switch for automatic sending (OFF by default) |
+| `AUTO_SEND` | `false` | Auto-deliver via SMTP right after a Telegram `/approve` (defaults to `AUTO_APPLY`) |
 | `DRY_RUN` | `true` | Simulate SMTP sends unless disabled |
 | `AUTO_APPLY_MIN_SCORE` | `70` | Score floor for auto-send |
 | `DAILY_SEND_LIMIT` | `10` | Max sends per day |
@@ -201,6 +202,20 @@ You run `jobpipe approve ID`. This:
 
 Nothing is sent. You double-click the `.eml`, review it, fill in placeholders, and press Send in your mail client.
 
+Approve via Telegram (`/approve ID` or the Approve button) works the same way, but if
+`AUTO_SEND` is true (it follows `AUTO_APPLY` unless set separately) jobpipe also
+handles delivery right after you approve:
+
+- **`DRY_RUN=true`** (default): the `.eml` plus a readable `.txt` copy of the email
+  are forwarded to Telegram, followed by a message with inline **✉️ Send** / **❌
+  Cancel** buttons. Nothing is emailed until you press **Send**, which delivers via
+  SMTP and reports back on Telegram and in the cmd. Press **Cancel** to skip.
+- **`DRY_RUN=false`**: the email is delivered via SMTP immediately after approve, and
+  the outcome (sent / blocked / failed) is reported on Telegram and in the cmd.
+
+The `.eml` (for desktop mail clients) and a `.txt` copy (readable inside Telegram)
+are both forwarded to Telegram as a record.
+
 ### 7. Send (human action)
 
 Run `jobpipe send ID` (or `jobpipe approve ID --send --yes`). `policy.check()` runs every gate:
@@ -276,6 +291,16 @@ The watcher must run 24/7 (~50 MB RAM, no GPU). The LLM does not — split them.
 4. Cut the five `.docx` CV variants into `cv/`.
 5. `python3 rescore.py` to confirm the scoring lift.
 6. Send one application to yourself and read it as a recruiter would.
+
+### Profile placeholders
+
+When a job requests materials (GitHub, Portfolio, salary, notice period, intro video),
+`jobpipe approve` appends `[YOUR ANSWER: ...]` placeholders to the email body.
+Known placeholders are auto-filled from `profile.yaml` (GitHub → `candidate.github`,
+Portfolio → `candidate.portfolio`, salary → `preferences.minimum_salary`) before
+the `.eml` is written. Anything without a profile value (e.g. salary when
+`minimum_salary` is null, notice period, intro video) stays as a placeholder and
+`jobpipe send` will block until you fill it in or add it to `profile.yaml`.
 
 ## Not built, deliberately
 
