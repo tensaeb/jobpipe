@@ -178,6 +178,10 @@ async def run(backfill: int = 0):
     await client.start()
     log.info("watching: %s", ", ".join(TG_CHANNELS))
 
+    # Initialize heartbeat immediately after connecting.
+    HEARTBEAT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    HEARTBEAT_FILE.write_text(str(_time.time()))
+
     # Start bot listener if a bot token is configured.
     if TG_BOT_TOKEN:
         from . import notify
