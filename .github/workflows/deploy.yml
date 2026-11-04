@@ -1,0 +1,144 @@
+name: Deploy JobPipe
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jobpipe-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Configure SSH
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/jobpipe_ec2
+          chmod 600 ~/.ssh/jobpipe_ec2
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy and verify
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh -i ~/.ssh/jobpipe_ec2 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" 'bash -s' <<'REMOTE'
+          set -Eeuo pipefail
+
+          cd /opt/jobpipe
+
+          PREVIOUS_SHA="$(git rev-parse HEAD)"
+          OFFSET_BACKUP=""
+
+          # Preserve the live Telegram offset before Git changes anything.
+          if [ -f data/bot_offset.json ]; then
+            OFFSET_BACKUP="$(mktemp /tmp/jobpipe-offset.XXXXXX)"
+            cp -p data/bot_offset.json "$OFFSET_BACKUP"
+          fi
+
+          restore_offset() {
+            if [ -n "$OFFSET_BACKUP" ] && [ -f "$OFFSET_BACKUP" ]; then
+              mkdir -p data
+              cp -p "$OFFSET_BACKUP" data/bot_offset.json
+            fi
+          }
+
+          wait_for_healthy() {
+            local timeout="$1"
+            local elapsed=0
+            local cid status
+
+            while [ "$elapsed" -lt "$timeout" ]; do
+              cid="$(docker compose ps -q watcher)"
+
+              if [ -n "$cid" ]; then
+                status="$(docker inspect \
+                  --format '{{.State.Health.Status}}' "$cid" 2>/dev/null || true)"
+
+                echo "Watcher health: ${status:-unknown}"
+
+                if [ "$status" = "healthy" ]; then
+                  return 0
+                fi
+
+                if [ "$status" = "unhealthy" ]; then
+                  docker compose logs --tail=100 watcher
+                  return 1
+                fi
+              fi
+
+              sleep 10
+              elapsed=$((elapsed + 10))
+            done
+
+            docker compose logs --tail=100 watcher
+            return 1
+          }
+
+          rollback() {
+            local rc=$?
+            trap - ERR
+
+            echo "DEPLOYMENT FAILED. Rolling back to $PREVIOUS_SHA"
+
+            git reset --hard "$PREVIOUS_SHA" || true
+            restore_offset
+
+            if docker compose build watcher &&
+               docker compose up -d --force-recreate watcher; then
+              if wait_for_healthy 420; then
+                echo "Rollback successful."
+              else
+                echo "WARNING: Rollback container did not become healthy."
+                docker compose logs --tail=100 watcher
+              fi
+            else
+              echo "WARNING: Could not rebuild or restart previous version."
+            fi
+
+            [ -z "$OFFSET_BACKUP" ] || rm -f "$OFFSET_BACKUP"
+            exit "$rc"
+          }
+
+          trap rollback ERR
+
+          echo "===== FETCH LATEST CODE ====="
+          git fetch origin main
+          git reset --hard origin/main
+
+          echo "===== RESTORE RUNTIME OFFSET ====="
+          restore_offset
+
+          echo "===== BUILD DOCKER IMAGE ====="
+          docker compose build watcher
+
+          echo "===== RECREATE WATCHER ====="
+          docker compose up -d --force-recreate watcher
+
+          echo "===== VERIFY HEALTH ====="
+          wait_for_healthy 420
+
+          trap - ERR
+
+          [ -z "$OFFSET_BACKUP" ] || rm -f "$OFFSET_BACKUP"
+
+          echo "===== DEPLOYMENT SUCCESSFUL ====="
+          git log -1 --oneline
+          docker compose ps
+          REMOTE
